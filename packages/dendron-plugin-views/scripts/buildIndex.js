@@ -9,6 +9,8 @@ const out = WebViewCommonUtils.genVSCodeHTMLIndex({
   // dummy, not used. for browser mode, this is added by CRA app
   jsSrc: "",
   cssSrc: "",
+  //workaround for browser mode testing
+  url: 'http://localhost:3005',
   // cssSrc: `${path.join("public", "static", "css", theme + ".css")}`,
   port: 3005,
   wsRoot: path.resolve(path.join("..", "..", "test-workspace")),
