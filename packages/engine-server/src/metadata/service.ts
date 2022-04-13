@@ -26,6 +26,10 @@ type Metadata = Partial<{
    */
   inactiveUserMsgStatus: InactvieUserMsgStatusEnum;
   /**
+   * The status of lapsed user message.
+   */
+  lapsedUserSurveyStatus: LapsedUserSurveyStatusEnum;
+  /**
    * The status of initial survey.
    */
   initialSurveyStatus: InitialSurveyStatusEnum;
@@ -57,6 +61,11 @@ export enum InactvieUserMsgStatusEnum {
 }
 
 export enum InitialSurveyStatusEnum {
+  submitted = "submitted",
+  cancelled = "cancelled",
+}
+
+export enum LapsedUserSurveyStatusEnum {
   submitted = "submitted",
   cancelled = "cancelled",
 }
@@ -106,6 +115,10 @@ export class MetadataService {
     return this.getMeta().version || "0.0.0";
   }
 
+  getLapsedUserSurveyStatus() {
+    return this.getMeta().lapsedUserSurveyStatus;
+  }
+
   setMeta(key: keyof Metadata, value: any) {
     const stateFromFile = this.getMeta();
     stateFromFile[key] = value;
@@ -153,6 +166,10 @@ export class MetadataService {
 
   setInitialSurveyStatus(value: InitialSurveyStatusEnum) {
     this.setMeta("initialSurveyStatus", value);
+  }
+
+  setLapsedUserSurveyStatus(value: LapsedUserSurveyStatusEnum) {
+    this.setMeta("lapsedUserSurveyStatus", value);
   }
 
   setGlobalVersion(value: string) {
