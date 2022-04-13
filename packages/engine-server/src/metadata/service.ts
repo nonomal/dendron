@@ -53,6 +53,10 @@ type Metadata = Partial<{
    * Global version of Dendron
    */
   version: string;
+  /**
+   *
+   */
+  workspaceActivationContext: WorkspaceActivationContext;
 }>;
 
 export enum InactvieUserMsgStatusEnum {
@@ -68,6 +72,13 @@ export enum InitialSurveyStatusEnum {
 export enum LapsedUserSurveyStatusEnum {
   submitted = "submitted",
   cancelled = "cancelled",
+}
+
+export enum WorkspaceActivationContext {
+  // UNSET - Indicates this is the first Workspace Launch
+  "normal", // Normal Launch; No Special Behavior
+  "tutorial", // Launch the Tutorial
+  "seedBrowser", // Open with Seed Browser Webview
 }
 
 let _singleton: MetadataService | undefined;
@@ -117,6 +128,13 @@ export class MetadataService {
 
   getLapsedUserSurveyStatus() {
     return this.getMeta().lapsedUserSurveyStatus;
+  }
+
+  getActivationContext() {
+    return (
+      this.getMeta().workspaceActivationContext ??
+      WorkspaceActivationContext.normal
+    );
   }
 
   setMeta(key: keyof Metadata, value: any) {
@@ -174,5 +192,9 @@ export class MetadataService {
 
   setGlobalVersion(value: string) {
     this.setMeta("version", value);
+  }
+
+  setActivationContext(context: WorkspaceActivationContext) {
+    this.setMeta("workspaceActivationContext", context);
   }
 }
