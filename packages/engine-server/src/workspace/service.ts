@@ -1517,15 +1517,4 @@ export class WorkspaceService implements Disposable, IWorkspaceService {
       },
     });
   }
-
-  resetMeta() {
-    const fpath = getWSMetaFilePath({ wsRoot: this.wsRoot });
-    writeWSMetaFile({
-      fpath,
-      data: {
-        version: "0.0.0",
-        activationTime: 0,
-      },
-    });
-  }
 }
