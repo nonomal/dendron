@@ -8,7 +8,6 @@ import {
   ConfigEvents,
   ConfigUtils,
   CONSTANTS,
-  DendronConfig,
   DendronError,
   DENDRON_VSCODE_CONFIG_KEYS,
   getStage,
@@ -677,7 +676,7 @@ export async function _activate(
 
       // stats
       const platform = getOS();
-      const extensions = Extensions.getVSCodeExtnsion().map(
+      const extensions = Extensions.getDendronVSCodeExtnsion().map(
         ({ id, extension: ext }) => {
           return {
             id,
