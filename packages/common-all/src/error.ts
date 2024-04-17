@@ -2,9 +2,9 @@ import { StatusCodes } from "http-status-codes";
 import _ from "lodash";
 import { AxiosError } from "axios";
 import { ERROR_SEVERITY, ERROR_STATUS } from "./constants";
-import { RespV3 } from "./types";
+import { RespV3, RespV3ErrorResp } from "./types";
 
-type DendronErrorProps = {
+export type DendronErrorProps<TCode = StatusCodes | undefined> = {
   /**
    * Arbitrary payload
    */
@@ -16,10 +16,9 @@ type DendronErrorProps = {
   severity?: ERROR_SEVERITY;
 
   /**
-   * @deprecated - should only used in DendronServerError
    * Optional HTTP status code for error
    */
-  code?: StatusCodes;
+  code?: TCode;
 
   /**
    * @deprecated - should only used in DendronServerError
@@ -45,14 +44,63 @@ type ServerErrorProps = {
   code?: StatusCodes;
 };
 
-export type IDendronError = DendronErrorProps;
+export type IDendronError<TCode = StatusCodes | undefined> =
+  DendronErrorProps<TCode>;
 
-export class DendronError extends Error implements IDendronError {
+export class DendronError<TCode = StatusCodes | undefined>
+  extends Error
+  implements IDendronError<TCode>
+{
   public status?: string;
   public payload?: string;
   public severity?: ERROR_SEVERITY;
-  public code?: number;
+  public code?: TCode;
   public innerError?: Error;
+
+  /** The output that may be displayed to a person if they encounter this error. */
+  public stringifyForHumanReading() {
+    return this.message;
+  }
+
+  /** Overload this to change how the `payload` is stringified. */
+  protected payloadStringify() {
+    return JSON.stringify(this.payload);
+  }
+
+  /** The output that may be saved into the local logs for the user. */
+  public stringifyForLogs() {
+    const { severity, code, message } = this;
+    const payload: { [key: string]: any } = {
+      severity,
+      code,
+      message,
+    };
+    if (this.innerError) {
+      payload.innerError = this.innerError;
+    }
+    if (this.payload) {
+      payload.payload = this.payloadStringify();
+    }
+    return JSON.stringify(payload);
+  }
+
+  /** The output that may be sent to Sentry, or other telemetry service.
+   *
+   * This function will eventually check that the output is stripped of PII,
+   * but for now that's the same as these.
+   */
+  public stringifyForTelemetry() {
+    return this.stringifyForLogs();
+  }
+
+  /** If false, this error does not necessarily mean the operation failed. It should be possible to recover and resume. */
+  public get isFatal() {
+    return this.severity === ERROR_SEVERITY.FATAL;
+  }
+
+  static isDendronError(error: any): error is IDendronError {
+    return error?.message !== undefined;
+  }
 
   static createPlainError(props: Omit<DendronErrorProps, "name">) {
     return error2PlainObject({
@@ -81,7 +129,7 @@ export class DendronError extends Error implements IDendronError {
     severity,
     code,
     innerError,
-  }: Omit<DendronErrorProps, "name">) {
+  }: Omit<DendronErrorProps<TCode>, "name">) {
     super(message);
     this.name = "DendronError";
     this.status = status || "unknown";
@@ -134,12 +182,43 @@ export class DendronCompositeError extends Error implements IDendronError {
     // sometimes a composite error can be of size one. unwrap and show regular error message in this case
     if (this.errors.length === 1) {
       this.message = this.errors[0].message;
-    } else {
+    } else if (this.errors.length > 1) {
       const out = ["Multiple errors: "];
       const messages = this.errors.map((err) => ` - ${err.message}`);
       this.message = out.concat(messages).join("\n");
     }
   }
+
+  static isDendronCompositeError(
+    error: IDendronError
+  ): error is DendronCompositeError {
+    if (error.payload && _.isString(error.payload)) {
+      try {
+        // Sometimes these sections get serialized when going across from engine to UI
+        error.payload = JSON.parse(error.payload);
+      } catch {
+        // Nothing, the payload wasn't a serialized object
+      }
+    }
+
+    return (
+      _.isArray(error.payload) &&
+      error.payload.every(DendronError.isDendronError)
+    );
+  }
+}
+
+/** If the error is a composite error, then returns the list of errors inside it.
+ *
+ * If it is a single error, then returns that single error in a list.
+ *
+ * If this was not a Dendron error, then returns an empty list.
+ */
+export function errorsList(error: any) {
+  if (DendronCompositeError.isDendronCompositeError(error))
+    return error.payload;
+  if (DendronError.isDendronError(error)) return [error];
+  return [];
 }
 
 export class DendronServerError
@@ -240,7 +319,7 @@ export class ErrorFactory {
    */
   static create404Error({ url }: { url: string }): DendronError {
     return new DendronError({
-      message: `resource at ${url} does not exist`,
+      message: `resource ${url} does not exist`,
       severity: ERROR_SEVERITY.FATAL,
     });
   }
@@ -317,8 +396,15 @@ export class ErrorUtils {
   static isDendronError(error: unknown): error is DendronError {
     return _.get(error, "name", "") === "DendronError";
   }
-
-  static isErrorResp(resp: RespV3<any>) {
+  /**
+   * Given a RespV3, ensure it is an error resp.
+   *
+   * This helps typescript properly narrow down the type of the success resp's data as type T where it is called.
+   * Otherwise, because of how union types work, `data` will have the type T | undefined.
+   * @param args
+   * @returns
+   */
+  static isErrorResp(resp: RespV3<any>): resp is RespV3ErrorResp {
     return "error" in resp;
   }
 }

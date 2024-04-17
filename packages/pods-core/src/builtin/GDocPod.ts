@@ -16,6 +16,7 @@ import {
   stringifyError,
   DEngineClient,
   Time,
+  FOLDERS,
 } from "@dendronhq/common-all";
 import path from "path";
 import { vault2Path } from "@dendronhq/common-server";
@@ -336,21 +337,11 @@ export class GDocImportPod extends ImportPod<GDocImportPodConfig> {
     onPrompt?: (arg0?: PROMPT) => Promise<{ title: string } | undefined>;
     importComments?: ImportComments;
   }) => {
-    const {
-      note,
-      engine,
-      wsRoot,
-      vault,
-      confirmOverwrite,
-      onPrompt,
-      importComments,
-    } = opts;
-    const existingNote = NoteUtils.getNoteByFnameV5({
-      fname: note.fname,
-      notes: engine.notes,
-      vault,
-      wsRoot,
-    });
+    const { note, engine, vault, confirmOverwrite, onPrompt, importComments } =
+      opts;
+    const existingNote = (
+      await engine.findNotes({ fname: note.fname, vault })
+    )[0];
     if (!_.isUndefined(existingNote)) {
       if (
         (importComments?.enable &&
@@ -368,18 +359,18 @@ export class GDocImportPod extends ImportPod<GDocImportPodConfig> {
           const resp = await onPrompt(PROMPT.USERPROMPT);
 
           if (resp?.title.toLowerCase() === "yes") {
-            await engine.writeNote(existingNote, { newNode: true });
+            await engine.writeNote(existingNote);
             return existingNote;
           }
         } else {
-          await engine.writeNote(existingNote, { newNode: true });
+          await engine.writeNote(existingNote);
           return existingNote;
         }
       } else if (onPrompt) {
         onPrompt();
       }
     } else {
-      await engine.writeNote(note, { newNode: true });
+      await engine.writeNote(note);
       return note;
     }
     return undefined;
@@ -407,9 +398,8 @@ export class GDocImportPod extends ImportPod<GDocImportPodConfig> {
     } = config as GDocImportPodConfig;
 
     let { accessToken } = config as GDocImportPodConfig;
-    const assetDirName = "assets";
     const vpath = vault2Path({ vault, wsRoot });
-    const assetDir = path.join(vpath, assetDirName);
+    const assetDir = path.join(vpath, FOLDERS.ASSETS);
 
     /** refreshes token if token has already expired */
     if (Time.now().toSeconds() > expirationTime) {

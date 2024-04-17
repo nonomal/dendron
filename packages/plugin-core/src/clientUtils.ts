@@ -4,9 +4,9 @@ import {
   DendronError,
   DEngineClient,
   DNodeUtils,
-  LegacyNoteAddBehavior,
   LookupNoteTypeEnum,
   NoteAddBehavior,
+  NoteAddBehaviorEnum,
   NoteUtils,
   SchemaModuleProps,
   Time,
@@ -14,7 +14,6 @@ import {
 import _ from "lodash";
 import path from "path";
 import * as vscode from "vscode";
-import { PickerUtilsV2 } from "./components/lookup/utils";
 import { _noteAddBehaviorEnum } from "./constants";
 import { ExtensionProvider } from "./ExtensionProvider";
 
@@ -26,18 +25,8 @@ type CreateFnameOpts = {
   overrides?: CreateFnameOverrides;
 };
 
-type AddBehavior =
-  | "childOfDomain"
-  | "childOfCurrent"
-  | "asOwnDomain"
-  | "childOfDomainNamespace";
-
 export class DendronClientUtilsV2 {
-  static genNotePrefix(
-    fname: string,
-    addBehavior: AddBehavior,
-    opts: { engine: DEngineClient }
-  ) {
+  static genNotePrefix(fname: string, addBehavior: NoteAddBehavior) {
     let out: string;
     switch (addBehavior) {
       case "childOfDomain": {
@@ -45,23 +34,7 @@ export class DendronClientUtilsV2 {
         break;
       }
       case "childOfDomainNamespace": {
-        // out = "hello";
-        // const domain: NoteProps | undefined = undefined;
-        out = DNodeUtils.domainName(fname);
-        const vault = PickerUtilsV2.getOrPromptVaultForOpenEditor();
-        const domain = NoteUtils.getNoteByFnameV5({
-          fname,
-          notes: opts.engine.notes,
-          vault,
-          wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
-        });
-        if (domain && domain.schema) {
-          const smod = opts.engine.schemas[domain.schema.moduleId];
-          const schema = smod.schemas[domain.schema.schemaId];
-          if (schema && schema.data.namespace) {
-            out = NoteUtils.getPathUpTo(fname, 2);
-          }
-        }
+        out = NoteUtils.getPathUpTo(fname, 2);
         break;
       }
       case "childOfCurrent": {
@@ -98,7 +71,10 @@ export class DendronClientUtilsV2 {
    * @returns The file name of the new note
    */
   static genNoteName(
-    type: "JOURNAL" | "SCRATCH" | LookupNoteTypeEnum.task,
+    type:
+      | LookupNoteTypeEnum.journal
+      | LookupNoteTypeEnum.scratch
+      | LookupNoteTypeEnum.task,
     opts?: CreateFnameOpts
   ): {
     noteName: string;
@@ -112,7 +88,7 @@ export class DendronClientUtilsV2 {
     let name: string;
 
     switch (type) {
-      case "SCRATCH": {
+      case LookupNoteTypeEnum.scratch: {
         dateFormat =
           ExtensionProvider.getExtension().getWorkspaceSettingOrDefault({
             wsConfigKey: "dendron.defaultScratchDateFormat",
@@ -129,7 +105,7 @@ export class DendronClientUtilsV2 {
         });
         break;
       }
-      case "JOURNAL": {
+      case LookupNoteTypeEnum.journal: {
         const journalConfig = ConfigUtils.getJournal(config);
         dateFormat = journalConfig.dateFormat;
         addBehavior = journalConfig.addBehavior;
@@ -149,7 +125,7 @@ export class DendronClientUtilsV2 {
 
     if (!_.includes(_noteAddBehaviorEnum, addBehavior)) {
       const actual = addBehavior;
-      const choices = Object.keys(LegacyNoteAddBehavior).join(", ");
+      const choices = Object.keys(NoteAddBehaviorEnum).join(", ");
       throw Error(`${actual} must be one of: ${choices}`);
     }
 
@@ -161,13 +137,9 @@ export class DendronClientUtilsV2 {
       throw Error("Must be run from within a note");
     }
 
-    const engine = ExtensionProvider.getEngine();
     const prefix = DendronClientUtilsV2.genNotePrefix(
       currentNoteFname,
-      addBehavior as AddBehavior,
-      {
-        engine,
-      }
+      addBehavior
     );
 
     const noteDate = Time.now().toFormat(dateFormat);
@@ -184,7 +156,7 @@ export class DendronClientUtilsV2 {
     fname: string;
     client: DEngineClient;
   }): Promise<SchemaModuleProps> => {
-    const smod = _.find(client.schemas, { fname });
+    const smod = (await client.getSchema(fname)).data;
     if (!smod) {
       throw new DendronError({ message: "no note found" });
     }

@@ -1,6 +1,7 @@
 import {
   DEngineClient,
   DEngineInitResp,
+  NotePropsByIdDict,
   WorkspaceOpts,
 } from "@dendronhq/common-all";
 import assert from "assert";
@@ -61,7 +62,9 @@ export class AssertUtils {
       (match || []).map(([count, match]) => {
         const foundCount = countMatches(match);
         if (foundCount != count) {
-          throw `${match} found ${foundCount} times, expected equal to ${count} in ${body}`;
+          throw Error(
+            `${match} found ${foundCount} times, expected equal to ${count} in ${body}`
+          );
         }
         return true;
       })
@@ -70,7 +73,9 @@ export class AssertUtils {
       (fewerThan || []).map(([count, match]) => {
         const foundCount = countMatches(match);
         if (foundCount >= count) {
-          throw `${match} found ${foundCount} times, expected fewer than ${count} in ${body}`;
+          throw Error(
+            `${match} found ${foundCount} times, expected fewer than ${count} in ${body}`
+          );
         }
         return true;
       })
@@ -79,7 +84,9 @@ export class AssertUtils {
       (moreThan || []).map(([count, match]) => {
         const foundCount = countMatches(match);
         if (foundCount <= count) {
-          throw `${match} found ${foundCount} times, expected more than ${count} in ${body}`;
+          throw Error(
+            `${match} found ${foundCount} times, expected more than ${count} in ${body}`
+          );
         }
         return true;
       })
@@ -88,19 +95,30 @@ export class AssertUtils {
   }
 }
 
-export class TestPresetEntry<TBeforeOpts, TAfterOpts, TResultsOpts> {
+export class TestPresetEntry<
+  TBeforeOpts,
+  TAfterOpts = any,
+  TResultsOpts = any
+> {
   public label: string;
-  public before: (_opts: TBeforeOpts) => Promise<any>;
+  public beforeTestResults: (_opts: TBeforeOpts) => Promise<any>;
+  /**
+   * Run this before setting up workspace
+   */
   public preSetupHook: SetupHookFunction;
+  /**
+   * Run this before setting up hooks
+   */
   public postSetupHook: SetupHookFunction;
   public after: (_opts: TAfterOpts) => Promise<any>;
   public results: (_opts: TResultsOpts) => Promise<TestResult[]>;
   public init: () => Promise<void>;
+  public notes: NotePropsByIdDict = {};
 
   constructor({
     label,
     results,
-    before,
+    beforeTestResults,
     after,
     preSetupHook,
     postSetupHook,
@@ -109,17 +127,18 @@ export class TestPresetEntry<TBeforeOpts, TAfterOpts, TResultsOpts> {
     preSetupHook?: SetupHookFunction;
     postSetupHook?: SetupHookFunction;
     beforeSetup?: (_opts: TBeforeOpts) => Promise<any>;
-    before?: (_opts: TBeforeOpts) => Promise<any>;
+    beforeTestResults?: (_opts: TBeforeOpts) => Promise<any>;
     after?: (_opts: TAfterOpts) => Promise<any>;
     results: (_opts: TResultsOpts) => Promise<TestResult[]>;
   }) {
     this.label = label;
     this.results = results;
-    this.before = before ? before : async () => {};
-    this.preSetupHook = preSetupHook ? preSetupHook : async () => {};
-    this.postSetupHook = postSetupHook ? postSetupHook : async () => {};
-    this.after = after ? after : async () => {};
+    this.beforeTestResults = beforeTestResults || (async () => {});
+    this.preSetupHook = preSetupHook || (async () => {});
+    this.postSetupHook = postSetupHook || (async () => {});
+    this.after = after || (async () => {});
     this.init = async () => {};
+    this.preSetupHook = _.bind(this.preSetupHook, this);
   }
 }
 

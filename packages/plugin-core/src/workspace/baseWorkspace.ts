@@ -1,5 +1,5 @@
 import {
-  IntermediateDendronConfig,
+  DendronConfig,
   DendronError,
   DEngineClient,
   DVault,
@@ -7,8 +7,9 @@ import {
   WorkspaceType,
   ConfigUtils,
 } from "@dendronhq/common-all";
-import { DConfig } from "@dendronhq/engine-server";
+import { DConfig } from "@dendronhq/common-server";
 import * as vscode from "vscode";
+import { Logger } from "../logger";
 
 export abstract class DendronBaseWorkspace implements DWorkspaceV2 {
   public wsRoot: string;
@@ -32,8 +33,14 @@ export abstract class DendronBaseWorkspace implements DWorkspaceV2 {
   }
 
   // TODO: optimize to not read every time
-  get config(): IntermediateDendronConfig {
-    return DConfig.getOrCreate(this.wsRoot);
+  get config(): DendronConfig {
+    const { data, error } = DConfig.readConfigAndApplyLocalOverrideSync(
+      this.wsRoot
+    );
+    if (error) {
+      Logger.error({ error });
+    }
+    return data;
   }
 
   // TODO: optimize to not read every time

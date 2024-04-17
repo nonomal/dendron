@@ -1,35 +1,38 @@
 /* eslint-disable no-throw-literal */
 // @ts-ignore
-import title from "title";
 import matter from "gray-matter";
 import _ from "lodash";
 import minimatch from "minimatch";
 import path from "path";
+import title from "title";
 import { URI } from "vscode-uri";
 import {
   CONSTANTS,
   ERROR_STATUS,
+  InvalidFilenameReason,
   TAGS_HIERARCHY,
-  TAGS_HIERARCHY_BASE,
 } from "./constants";
 import { DendronError } from "./error";
+import { NoteDictsUtils } from "./noteDictsUtils";
 import { Time } from "./time";
 import {
   DEngineClient,
-  DLink,
   DNodeExplicitPropsEnum,
   DNodeImplicitPropsEnum,
   DNodeOpts,
   DNodeProps,
-  DNodePropsDict,
   DNodePropsQuickInputV2,
   DNoteLoc,
-  DVault,
   NoteChangeEntry,
+  NoteDicts,
   NoteLocalConfig,
   NoteOpts,
   NoteProps,
-  NotePropsDict,
+  NotePropsByIdDict,
+  NotePropsMeta,
+  NoteQuickInputV2,
+  ReducedDEngine,
+  RespV3,
   SchemaData,
   SchemaModuleDict,
   SchemaModuleOpts,
@@ -39,9 +42,8 @@ import {
   SchemaPropsDict,
   SchemaRaw,
 } from "./types";
+import { DVault } from "./types/DVault";
 import {
-  ConfigUtils,
-  DefaultMap,
   getSlugger,
   isNotUndefined,
   normalizeUnixPath,
@@ -50,13 +52,29 @@ import {
 import { genUUID } from "./uuid";
 import { VaultUtils } from "./vault";
 
+import YAML, { JSON_SCHEMA } from "js-yaml";
+
+export type ValidateFnameResp =
+  | {
+      isValid: false;
+      reason: InvalidFilenameReason;
+    }
+  | {
+      isValid: true;
+      reason?: never;
+    };
+
 /**
  * Utilities for dealing with nodes
  */
 export class DNodeUtils {
-  static addChild(parent: DNodeProps, child: DNodeProps) {
+  static addChild(parent: NotePropsMeta, child: NotePropsMeta) {
     parent.children = Array.from(new Set(parent.children).add(child.id));
     child.parent = parent.id;
+  }
+
+  static removeChild(parent: NotePropsMeta, child: NotePropsMeta) {
+    parent.children = _.reject(parent.children, (ent) => ent === child.id);
   }
 
   static create(opts: DNodeOpts): DNodeProps {
@@ -117,27 +135,28 @@ export class DNodeUtils {
 
   static enhancePropForQuickInput({
     props,
-    schemas,
+    schema,
     vaults,
     wsRoot,
   }: {
     props: DNodeProps;
-    schemas: SchemaModuleDict;
+    schema?: SchemaModuleProps;
     vaults: DVault[];
     wsRoot: string;
   }): DNodePropsQuickInputV2 {
     const vault = VaultUtils.matchVault({ vaults, wsRoot, vault: props.vault });
+
     if (!vault) {
       throw Error("enhancePropForQuickInput, no vault found");
     }
     const vname = VaultUtils.getName(vault);
-    const vaultSuffix = `(${vname})`;
+    // to ensure there is a space between the note title and vault name
+    const vaultSuffix = ` (${vname})`;
     if (props.type === "note") {
       const isRoot = DNodeUtils.isRoot(props);
       const label = isRoot ? "root" : props.fname;
       const detail = props.desc;
-      const sm = props.schema ? schemas[props.schema.moduleId] : undefined;
-      const description = NoteUtils.genSchemaDesc(props, sm) + vaultSuffix;
+      const description = NoteUtils.genSchemaDesc(props, schema) + vaultSuffix;
       const out = { ...props, label, detail, description };
       return out;
     } else {
@@ -150,51 +169,106 @@ export class DNodeUtils {
 
   static enhancePropForQuickInputV3(opts: {
     props: DNodeProps;
-    schemas: SchemaModuleDict;
     vaults: DVault[];
     wsRoot: string;
+    schema?: SchemaModuleProps;
     alwaysShow?: boolean;
   }): DNodePropsQuickInputV2 {
     const { alwaysShow } = _.defaults(opts, { alwaysShow: false });
     return { ...this.enhancePropForQuickInput(opts), alwaysShow };
   }
 
+  /**
+   * This version skips unnecessary parameters such as wsRoot and vaults to
+   * simplify the ILookupProvider interface
+   * @param opts
+   * @returns
+   */
+  static enhancePropForQuickInputV4(opts: {
+    props: NoteProps;
+    schema?: SchemaModuleProps;
+    alwaysShow?: boolean;
+  }): NoteQuickInputV2 {
+    const { props, schema } = opts;
+    const vname = VaultUtils.getName(opts.props.vault);
+    const vaultSuffix = `(${vname})`;
+    if (opts.props.type === "note") {
+      const isRoot = DNodeUtils.isRoot(props);
+      const label = isRoot ? "root" : props.fname;
+      const detail = props.desc;
+      const description = NoteUtils.genSchemaDesc(props, schema) + vaultSuffix;
+      const out = { ...props, label, detail, description };
+      return out;
+    } else {
+      const label = DNodeUtils.isRoot(props) ? "root" : props.id;
+      const detail = props.desc;
+      const out = { ...props, label, detail, description: vaultSuffix };
+      return out;
+    }
+  }
+
   static findClosestParent(
     fpath: string,
-    nodes: DNodeProps[],
+    noteDicts: NoteDicts,
     opts: {
       noStubs?: boolean;
       vault: DVault;
-      wsRoot: string;
     }
-  ): DNodeProps {
+  ): NoteProps {
     const { vault } = opts;
     const dirname = DNodeUtils.dirName(fpath);
     if (dirname === "") {
-      const _node = _.find(
-        nodes,
-        (ent) =>
-          ent.fname === "root" &&
-          VaultUtils.isEqual(ent.vault, vault, opts.wsRoot)
-      );
+      const _node = NoteDictsUtils.findByFname({
+        fname: "root",
+        noteDicts,
+        vault,
+      })[0];
       if (_.isUndefined(_node)) {
         throw new DendronError({ message: `no root found for ${fpath}` });
       }
       return _node;
     }
-    const maybeNode = NoteUtils.getNoteByFnameV5({
+    const maybeNode = NoteDictsUtils.findByFname({
       fname: dirname,
-      notes: nodes,
+      noteDicts,
       vault,
-      wsRoot: opts.wsRoot,
-    });
+    })[0];
     if (
       (maybeNode && !opts?.noStubs) ||
       (maybeNode && opts?.noStubs && !maybeNode.stub && !maybeNode.schemaStub)
     ) {
       return maybeNode;
     } else {
-      return DNodeUtils.findClosestParent(dirname, nodes, opts);
+      return DNodeUtils.findClosestParent(dirname, noteDicts, opts);
+    }
+  }
+
+  static async findClosestParentWithEngine(
+    fpath: string,
+    engine: ReducedDEngine,
+    opts: {
+      excludeStub?: boolean;
+      vault: DVault;
+    }
+  ): Promise<NotePropsMeta> {
+    const { vault, excludeStub } = opts;
+    const dirname = DNodeUtils.dirName(fpath);
+    if (dirname === "") {
+      const notes = await engine.findNotesMeta({ fname: "root", vault });
+      if (notes.length === 0) {
+        throw new DendronError({ message: `no root found for ${fpath}` });
+      }
+      return notes[0];
+    }
+    const maybeNotes = await engine.findNotesMeta({
+      fname: dirname,
+      vault,
+      excludeStub,
+    });
+    if (maybeNotes.length > 0) {
+      return maybeNotes[0];
+    } else {
+      return DNodeUtils.findClosestParentWithEngine(dirname, engine, opts);
     }
   }
 
@@ -222,23 +296,6 @@ export class DNodeUtils {
     return fname.split(".").length;
   }
 
-  static getDomain(
-    node: DNodeProps,
-    opts: {
-      nodeDict: DNodePropsDict;
-    }
-  ): DNodeProps {
-    if (node.fname === "root") {
-      throw Error("root has no domain");
-    }
-    const isRoot = DNodeUtils.isRoot(opts.nodeDict[node.parent as string]);
-    if (isRoot) {
-      return node;
-    } else {
-      return DNodeUtils.getDomain(DNodeUtils.getParent(node, opts), opts);
-    }
-  }
-
   static getFullPath(opts: {
     wsRoot: string;
     vault: DVault;
@@ -250,45 +307,7 @@ export class DNodeUtils {
     return path.join(root, opts.basename);
   }
 
-  static getParent(
-    node: DNodeProps,
-    opts: {
-      nodeDict: DNodePropsDict;
-    }
-  ): DNodeProps {
-    if (DNodeUtils.isRoot(node)) {
-      throw Error("root has no parent");
-    }
-    const parent = opts.nodeDict[node.parent as string];
-    if (_.isUndefined(parent)) {
-      throw Error(`parent ${node.parent} not found`);
-    }
-    return parent;
-  }
-
-  static getChildren(
-    node: DNodeProps,
-    opts: {
-      recursive?: boolean;
-      nodeDict: DNodePropsDict;
-    }
-  ): DNodeProps[] {
-    const { nodeDict, recursive } = opts;
-    const children = node.children.map((id) => {
-      if (!_.has(nodeDict, id)) {
-        throw Error("child nod found");
-      }
-      return nodeDict[id];
-    });
-    if (recursive) {
-      return children.concat(
-        children.map((c) => DNodeUtils.getChildren(c, opts)).flat()
-      );
-    }
-    return children;
-  }
-
-  static isRoot(note: DNodeProps) {
+  static isRoot(note: NotePropsMeta) {
     return note.fname === "root";
   }
 
@@ -297,15 +316,8 @@ export class DNodeUtils {
    * @param note DNodeProps
    * @returns name of leaf node
    */
-  static getLeafName(note: DNodeProps) {
+  static getLeafName(note: NotePropsMeta) {
     return _.split(note.fname, ".").pop();
-  }
-
-  static cleanFname(fname: string) {
-    if (fname.indexOf(" ") >= 0) {
-      fname = _.replace(fname, /\s/g, "-");
-    }
-    return _.kebabCase(fname);
   }
 }
 
@@ -323,78 +335,35 @@ export class NoteUtils {
   static RE_FM_UPDATED_OR_CREATED =
     /^(?<beforeTimestamp>(updated|created): *)(?<timestamp>[0-9]+)$/;
 
-  /** Adds a backlink by mutating the 'to' argument in place.
-   *
-   *  @param from note that the link is pointing from.
-   *  @param to note that the link is pointing to. (mutated)
-   *  @param link backlink to add. */
-  static addBacklink({
-    from,
-    to,
-    link,
-  }: {
-    from: NoteProps;
-    to: NoteProps;
-    link: DLink;
-  }): void {
-    to.links.push({
-      from: { fname: from.fname, vaultName: VaultUtils.getName(from.vault) },
-      type: "backlink",
-      position: link.position,
-      value: link.value,
-      alias: link.alias,
-    });
-  }
-
-  static deleteChildFromParent(opts: {
-    childToDelete: NoteProps;
-    notes: NotePropsDict;
-  }): NoteChangeEntry[] {
-    const changed: NoteChangeEntry[] = [];
-    const { childToDelete, notes } = opts;
-    let parent;
-    if (childToDelete.parent) {
-      parent = notes[childToDelete.parent];
-    } else {
-      throw new DendronError({
-        message: `No parent found for ${childToDelete.fname}`,
-      });
-    }
-
-    const prevParentState = { ...parent };
-    parent.children = _.reject<string[]>(
-      parent.children,
-      (ent: string) => ent === childToDelete.id
-    ) as string[];
-    changed.push({
-      status: "update",
-      prevNote: prevParentState,
-      note: parent,
-    });
-    return changed;
+  static getNoteTraits(note: NotePropsMeta): string[] {
+    return _.get(note, "traitIds", []);
   }
 
   /**
    * Add node to parents up the note tree, or create stubs if no direct parents exists
+   *
    * @param opts
-   * @returns All notes that were changed including the parents
+   * @returns All parent notes that were changed
    */
   static addOrUpdateParents(opts: {
     note: NoteProps;
-    notesList: NoteProps[];
+    noteDicts: NoteDicts;
     createStubs: boolean;
-    wsRoot: string;
   }): NoteChangeEntry[] {
-    const { note, notesList, createStubs, wsRoot } = opts;
-    const parentPath = DNodeUtils.dirName(note.fname).toLowerCase();
-    const parent =
-      _.find(
-        notesList,
-        (p) =>
-          p.fname.toLowerCase() === parentPath &&
-          VaultUtils.isEqual(p.vault.fsPath, note.vault.fsPath, wsRoot)
-      ) || null;
+    const { note, noteDicts, createStubs } = opts;
     const changed: NoteChangeEntry[] = [];
+
+    // Ignore if root note
+    if (DNodeUtils.isRoot(note)) {
+      return changed;
+    }
+    const parentPath = DNodeUtils.dirName(note.fname).toLowerCase();
+    const parent = NoteDictsUtils.findByFname({
+      fname: parentPath,
+      noteDicts,
+      vault: note.vault,
+    })[0];
+
     if (parent) {
       const prevParentState = { ...parent };
       DNodeUtils.addChild(parent, note);
@@ -414,10 +383,9 @@ export class NoteUtils {
       throw DendronError.createFromStatus(err);
     }
     if (!parent) {
-      const ancestor = DNodeUtils.findClosestParent(note.fname, notesList, {
+      const ancestor = DNodeUtils.findClosestParent(note.fname, noteDicts, {
         vault: note.vault,
-        wsRoot,
-      }) as NoteProps;
+      });
 
       const prevAncestorState = { ...ancestor };
 
@@ -454,52 +422,45 @@ export class NoteUtils {
     return DNodeUtils.create({ ...cleanOpts, type: "note" });
   }
 
-  static createWithSchema({
+  static async createWithSchema({
     noteOpts,
     engine,
   }: {
     noteOpts: NoteOpts;
     engine: DEngineClient;
-  }): NoteProps {
+  }): Promise<NoteProps> {
     const note = NoteUtils.create(noteOpts);
-    const maybeMatch = SchemaUtils.matchPath({
+    const maybeMatch = await SchemaUtils.matchPath({
       notePath: noteOpts.fname,
-      schemaModDict: engine.schemas,
+      engine,
     });
     if (maybeMatch) {
       const { schema, schemaModule } = maybeMatch;
       NoteUtils.addSchema({ note, schemaModule, schema });
-      const maybeTemplate = schema.data.template;
-      if (maybeTemplate) {
-        // TODO: Support xvault with user prompting for this flow
-        /*
-         * Get first valid template note.
-         * First look for template in same vault as note. Otherwise, look across all vaults.
-         * If there are multiple template matches, apply first one.
-         * This is temp until we get xvault support
-         */
-        const tempInSameVault = NoteUtils.getNoteByFnameFromEngine({
-          fname: maybeTemplate.id,
-          vault: note.vault,
-          engine,
-        });
-        const tempNote =
-          tempInSameVault ||
-          NoteUtils.getNotesByFnameFromEngine({
-            fname: maybeTemplate.id,
-            engine,
-          })[0];
-
-        if (tempNote) {
-          SchemaUtils.applyTemplate({
-            templateNote: tempNote,
-            note,
-            engine,
-          });
-        }
-      }
     }
     return note;
+  }
+
+  /**
+   * Given a stub note, update it so that it has a schema applied to it
+   * This is done before the stub note is accepted as a new item
+   * and saved to the store
+   */
+  static async updateStubWithSchema(opts: {
+    stubNote: NoteProps;
+    engine: DEngineClient;
+  }): Promise<NoteProps> {
+    const { stubNote, engine } = opts;
+    const cleanStubNote = _.omit(stubNote, "stub");
+    const schemaMatch = await SchemaUtils.matchPath({
+      notePath: cleanStubNote.fname,
+      engine,
+    });
+    if (schemaMatch) {
+      const { schema, schemaModule } = schemaMatch;
+      NoteUtils.addSchema({ note: cleanStubNote, schemaModule, schema });
+    }
+    return cleanStubNote;
   }
 
   static createRoot(opts: Partial<NoteOpts> & { vault: DVault }): NoteProps {
@@ -554,7 +515,7 @@ export class NoteUtils {
    * @returns
    */
   static createWikiLink(opts: {
-    note: NoteProps;
+    note: NotePropsMeta;
     anchor?: {
       value: string;
       type: "header" | "blockAnchor";
@@ -573,7 +534,7 @@ export class NoteUtils {
     const { fname, vault } = note;
     let title = note.title;
 
-    if (note.fname.startsWith(TAGS_HIERARCHY_BASE)) {
+    if (note.fname.startsWith(TAGS_HIERARCHY)) {
       const tag = note.fname.split(TAGS_HIERARCHY)[1];
       return `#${tag}`;
     }
@@ -695,17 +656,6 @@ export class NoteUtils {
     return normTitle;
   }
 
-  /**
-   * Get config from a note
-   * Currently only support global config
-   */
-  static getNoteLocalConfig(note: NoteProps) {
-    if (note.config) {
-      return note.config;
-    }
-    return {};
-  }
-
   static updateNoteLocalConfig<K extends keyof NoteLocalConfig>(
     note: NoteProps,
     key: K,
@@ -738,272 +688,14 @@ export class NoteUtils {
     return title(formatted);
   }
 
-  static genUpdateTime() {
-    const now = Time.now().toMillis();
-    return now;
-  }
-
-  /** Returns true when the note has reference links (Eg. ![[ref-link]]); false otherwise. */
-  static hasRefLinks(note: NoteProps) {
-    return note.links.some((link) => link.type === "ref");
-  }
-
-  /**
-   * Retrieve the latest update time of the preview note tree.
-   *
-   * Preview note tree includes links whose content is rendered in the rootNote preview,
-   * particularly the reference links (![[ref-link-example]]). */
-  static getLatestUpdateTimeOfPreviewNoteTree({
-    rootNote,
-    notes,
-  }: {
-    rootNote: NoteProps;
-    notes: NotePropsDict;
-  }) {
-    // If the note does not have reference links than the last updated time of
-    // the preview tree is the last updated time of the note itself. Hence, we
-    // can avoid all heavier logic of getting ready to traverse notes.
-    if (!this.hasRefLinks(rootNote)) {
-      return rootNote.updated;
-    }
-
-    // Maps lowercase file names to list of note props with matching file name.
-    // We will use a map to avoid having to loop over the the notes to find the notes
-    // by file names for each fname in the tree. In the future if we start keeping these
-    // values cached centrally we should replace these adhoc created maps with centrally cached values.
-    const mapByFName = new DefaultMap<string, NoteProps[]>(() => []);
-    _.values(notes).forEach((note) => {
-      const lowercaseFName = note.fname.toLowerCase();
-
-      // We are going to follow the current behavior of vault-less file name resolution:
-      // The first matching file name that is met should win.
-      mapByFName.get(lowercaseFName).push(note);
-    });
-
-    const visitedIds = new Set<string>();
-
-    return this._getLatestUpdateTimeOfPreviewNoteTree({
-      note: rootNote,
-      mapByFName,
-      visitedIds,
-      latestUpdated: rootNote.updated,
-    });
-  }
-
-  private static _getLatestUpdateTimeOfPreviewNoteTree({
-    note,
-    latestUpdated,
-    mapByFName,
-    visitedIds,
-  }: {
-    note: NoteProps;
-    latestUpdated: number;
-    mapByFName: DefaultMap<string, NoteProps[]>;
-    visitedIds: Set<string>;
-  }): number {
-    if (note.updated > latestUpdated) {
-      latestUpdated = note.updated;
-    }
-
-    // Mark the visited nodes so we don't end up recursively spinning if there
-    // are cycles in our preview tree such as [[foo]] -> [[!bar]] -> [[!foo]]
-    if (visitedIds.has(note.id)) {
-      return latestUpdated;
-    } else {
-      visitedIds.add(note.id);
-    }
-
-    const linkedRefNotes = note.links
-      .filter((link) => link.type === "ref")
-      .filter((link) => link.to && link.to.fname)
-      .map((link) => {
-        const pointTo = link.to!;
-        const lowercaseFname = pointTo.fname!.toLowerCase();
-
-        const matchingList: NoteProps[] = mapByFName.get(lowercaseFname);
-
-        // When there is a vault specified in the link we want to respect that
-        // specification, otherwise we will map by just the file name.
-        if (pointTo.vaultName) {
-          const filteredByVault = matchingList.filter(
-            (n) => VaultUtils.getName(n.vault) === pointTo.vaultName
-          );
-          return filteredByVault[0];
-        } else {
-          return matchingList[0];
-        }
-      })
-      // Filter out broken links (pointing to non existent files)
-      .filter((refNote) => refNote !== undefined);
-
-    for (const linkedNote of linkedRefNotes) {
-      // Recurse into each child reference linked note.
-      latestUpdated = this._getLatestUpdateTimeOfPreviewNoteTree({
-        note: linkedNote,
-        mapByFName,
-        visitedIds,
-        latestUpdated,
-      });
-    }
-
-    return latestUpdated;
-  }
-
-  static getNotesByFnameFromEngine({
-    fname,
-    engine,
-    vault,
-  }: {
-    fname: string;
-    engine: DEngineClient;
-    vault?: DVault;
-  }): NoteProps[] {
-    let notes = engine.noteFnames.get(engine.notes, fname);
-    if (vault)
-      notes = notes.filter((note) => VaultUtils.isEqualV2(note.vault, vault));
-    return notes;
-  }
-
-  /** @deprecated see {@link NoteUtils.getNoteByFnameFromEngine} */
-  static getNoteByFnameV5({
-    fname,
-    notes,
-    vault,
-    wsRoot,
-  }: {
-    fname: string;
-    notes: NotePropsDict | NoteProps[];
-    vault: DVault;
-    wsRoot: string;
-  }): NoteProps | undefined {
-    if (!_.isArray(notes)) {
-      notes = _.values(notes);
-    }
-    const out = _.find(notes, (ent) => {
-      return (
-        ent.fname.toLowerCase() === fname.toLowerCase() &&
-        VaultUtils.isEqual(vault, ent.vault, wsRoot)
-      );
-    });
-    return out;
-  }
-
-  static getNoteByFnameFromEngine(opts: {
-    fname: string;
-    vault: DVault;
-    engine: DEngineClient;
-  }): NoteProps | undefined {
-    return this.getNotesByFnameFromEngine(opts)[0];
-  }
-
-  /** If `to vault` is defined, returns note from that vault
-   *  else searches all the vaults, to get the note with matching fname.
-   * If more than one notes are with same fname, returns the note with same vault as `fromVault` */
-
-  static getNoteFromMultiVault(opts: {
-    fname: string;
-    engine: DEngineClient;
-    fromVault: DVault;
-    wsRoot: string;
-    toVault?: DVault;
-  }) {
-    const { fname, engine, fromVault, toVault, wsRoot } = opts;
-    let existingNote: NoteProps | undefined;
-    const maybeNotes = NoteUtils.getNotesByFnameFromEngine({
-      fname,
-      engine,
-      vault: toVault,
-    });
-
-    if (maybeNotes.length === 1) {
-      // Only one match so use that as note
-      existingNote = maybeNotes[0];
-    } else if (maybeNotes.length > 1) {
-      // If there are multiple notes with this fname, default to one that's in the same vault first.
-      const sameVaultNote = _.filter(maybeNotes, (n) =>
-        VaultUtils.isEqual(n.vault, fromVault, wsRoot)
-      )[0];
-      if (!_.isUndefined(sameVaultNote)) {
-        // There is a note that's within the same vault, let's go with that.
-        existingNote = sameVaultNote;
-      } else {
-        // Otherwise, just pick one, doesn't matter which.
-        existingNote = maybeNotes[0];
-      }
-    } // Else no match in which case we return undefined
-    return existingNote;
-  }
-
-  static getNoteOrThrow({
-    fname,
-    notes,
-    vault,
-    wsRoot,
-  }: {
-    fname: string;
-    notes: NotePropsDict | NoteProps[];
-    vault: DVault;
-    wsRoot: string;
-  }): NoteProps {
-    if (!_.isArray(notes)) {
-      notes = _.values(notes);
-    }
-    const out = _.find(notes, (ent) => {
-      return (
-        ent.fname.toLowerCase() === fname.toLowerCase() &&
-        VaultUtils.isEqual(vault, ent.vault, wsRoot)
-      );
-    });
-    if (!out) {
-      throw new DendronError({ message: `note ${fname} not found` });
-    }
-    return out;
-  }
-
-  /**
-   @deprecated
-   */
-  static getNoteByFname(
-    fname: string,
-    notes: NotePropsDict,
-    opts?: { throwIfEmpty?: boolean; vault?: DVault }
-  ): NoteProps | undefined {
-    const _out = _.filter(_.values(notes), (ent) => {
-      return ent.fname.toLowerCase() === fname.toLowerCase();
-    });
-    let out;
-    if (_out.length > 1) {
-      if (!opts?.vault) {
-        throw new DendronError({
-          message: `multiple nodes found and no vault given for ${fname}`,
-        });
-      }
-      out = _.find(
-        _out,
-        (ent) => ent.vault.fsPath === opts?.vault?.fsPath
-      ) as NoteProps;
-      if (_.isUndefined(out)) {
-        throw new DendronError({
-          message: `no note found for vault: ${opts.vault.fsPath}`,
-        });
-      }
-    } else {
-      out = _out[0];
-    }
-    if (opts?.throwIfEmpty && _.isUndefined(out)) {
-      throw Error(`${fname} not found in getNoteByFname`);
-    }
-    return out;
-  }
-
   static getNotesWithLinkTo({
     note,
     notes,
   }: {
-    note: NoteProps;
-    notes: NotePropsDict;
-  }): NoteProps[] {
-    const maybe = _.values(notes).map((ent) => {
+    note: NotePropsMeta;
+    notes: NotePropsMeta[];
+  }): NotePropsMeta[] {
+    const maybe = notes.map((ent) => {
       if (
         _.find(ent.links, (l) => {
           return l.to?.fname?.toLowerCase() === note.fname.toLowerCase();
@@ -1014,14 +706,14 @@ export class NoteUtils {
         return;
       }
     });
-    return _.reject(maybe, _.isUndefined) as NoteProps[];
+    return _.reject(maybe, _.isUndefined) as NotePropsMeta[];
   }
 
   static getFullPath({
     note,
     wsRoot,
   }: {
-    note: NoteProps;
+    note: NotePropsMeta;
     wsRoot: string;
   }): string {
     try {
@@ -1039,10 +731,15 @@ export class NoteUtils {
     }
   }
 
-  static getURI({ note, wsRoot }: { note: NoteProps; wsRoot: string }): URI {
+  static getURI({
+    note,
+    wsRoot,
+  }: {
+    note: NotePropsMeta;
+    wsRoot: string;
+  }): URI {
     return URI.file(this.getFullPath({ note, wsRoot }));
   }
-
   /**
    * Get a list that has all the parents of the current note with the current note
    */
@@ -1052,7 +749,7 @@ export class NoteUtils {
     sortDesc = true,
   }: {
     note: NoteProps;
-    notes: NotePropsDict;
+    notes: NotePropsByIdDict;
     sortDesc?: boolean;
   }): NoteProps[] {
     const out = [];
@@ -1082,7 +779,7 @@ export class NoteUtils {
     return hpath.split(".").slice(0, numCompoenents).join(".");
   }
 
-  static getRoots(notes: NotePropsDict): NoteProps[] {
+  static getRoots(notes: NotePropsByIdDict): NoteProps[] {
     return _.filter(_.values(notes), DNodeUtils.isRoot);
   }
 
@@ -1101,7 +798,7 @@ export class NoteUtils {
     opts,
   }: {
     noteRaw: NoteProps;
-    noteHydrated: NoteProps;
+    noteHydrated: NotePropsMeta;
     opts?: Partial<{
       keepBackLinks: boolean;
     }>;
@@ -1118,93 +815,27 @@ export class NoteUtils {
     return { ...noteRaw, ...hydrateProps };
   }
 
-  /**
-   * Update note metadata (eg. links and anchors)
-   * Calculate note metadata based on contents of the notes
-   */
-  static async updateNoteMetadata({
-    note,
-    fmChangeOnly,
-    engine,
-    enableLinkCandidates,
-  }: {
-    note: NoteProps;
-    fmChangeOnly: boolean;
-    engine: DEngineClient;
-    enableLinkCandidates?: boolean;
-  }) {
-    // Avoid calculating links/anchors if the note is too long
-    if (
-      note.body.length > ConfigUtils.getWorkspace(engine.config).maxNoteLength
-    ) {
-      return note;
-    }
-    // Links have to be updated even with frontmatter only changes
-    // because `tags` in frontmatter adds new links
-    const links = await engine.getLinks({ note, type: "regular" });
-    if (!links.data) {
-      throw new DendronError({
-        message: "Unable to calculate the links in note",
-        payload: {
-          note: NoteUtils.toLogObj(note),
-          error: links.error,
-        },
-      });
-    }
-    note.links = links.data;
-
-    // if only frontmatter changed, don't bother with heavy updates
-    if (!fmChangeOnly) {
-      const anchors = await engine.getAnchors({
-        note,
-      });
-      if (!anchors.data) {
-        throw new DendronError({
-          message: "Unable to calculate anchors in note",
-          payload: {
-            note: NoteUtils.toLogObj(note),
-            error: anchors.error,
-          },
-        });
-      }
-      note.anchors = anchors.data;
-
-      if (enableLinkCandidates) {
-        const linkCandidates = await engine.getLinks({
-          note,
-          type: "candidate",
-        });
-        if (!linkCandidates.data) {
-          throw new DendronError({
-            message: "Unable to calculate the backlink candidates in note",
-            payload: {
-              note: NoteUtils.toLogObj(note),
-              error: linkCandidates.error,
-            },
-          });
-        }
-        note.links = note.links.concat(linkCandidates.data);
-      }
-    }
-
-    return note;
-  }
-
   static match({ notePath, pattern }: { notePath: string; pattern: string }) {
     return minimatch(notePath, pattern);
   }
 
-  static isDefaultTitle(props: NoteProps) {
+  static isDefaultTitle(props: NotePropsMeta) {
     return props.title === NoteUtils.genTitle(props.fname);
   }
 
+  /**
+   * Remove `.md` extension if exists and remove spaces
+   * @param nodePath
+   * @returns
+   */
   static normalizeFname(nodePath: string) {
-    // remove md extension
-    const idx = nodePath.lastIndexOf(".md");
-    if (idx > 0) {
-      nodePath = nodePath.slice(0, idx);
+    nodePath = _.trim(nodePath);
+    if (nodePath.endsWith(".md")) {
+      //removing .md extenion from the end.
+      //Can be sliced with undefined, 0 or the negative index from the end.
+      nodePath = nodePath.slice(undefined, -3);
     }
-    return _.trim(nodePath);
+    return nodePath;
   }
 
   static isNoteProps(props: Partial<NoteProps>): props is NoteProps {
@@ -1275,10 +906,12 @@ export class NoteUtils {
     meta.title = _.toString(meta.title);
     meta.id = _.toString(meta.id);
 
-    return matter.stringify(body || "", meta);
+    const stringified = matter.stringify(body || "", meta);
+    // Stringify appends \n if it doesn't exist. Remove it if body originally doesn't contain new line
+    return body.slice(-1) !== "\n" ? stringified.slice(0, -1) : stringified;
   }
 
-  static toLogObj(note: NoteProps) {
+  static toLogObj(note: NotePropsMeta) {
     const { fname, id, children, vault, parent } = note;
     return {
       fname,
@@ -1289,7 +922,7 @@ export class NoteUtils {
     };
   }
 
-  static toNoteLoc(note: NoteProps): DNoteLoc {
+  static toNoteLoc(note: NotePropsMeta): DNoteLoc {
     const { fname, id, vault } = note;
     return {
       fname,
@@ -1301,7 +934,7 @@ export class NoteUtils {
   /**
    * Human readable note location. eg: `dendron://foo (uisdfsdfsdf)`
    */
-  static toNoteLocString(note: NoteProps): string {
+  static toNoteLocString(note: NotePropsMeta): string {
     const noteLoc = this.toNoteLoc(note);
     const out: string[] = [];
     if (noteLoc.vaultName) {
@@ -1318,50 +951,125 @@ export class NoteUtils {
     return path.basename(uri.fsPath, ".md");
   }
 
-  static validate(noteProps: Partial<NoteProps>) {
-    if (_.isUndefined(noteProps)) {
-      return DendronError.createFromStatus({
-        status: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
-        message: "NoteProps is undefined",
-      });
+  /**
+   * Check if input is a valid note
+   * @param maybeNoteProps
+   * @returns
+   */
+  static validate(maybeNoteProps: any): RespV3<boolean> {
+    if (_.isUndefined(maybeNoteProps)) {
+      return {
+        error: DendronError.createFromStatus({
+          status: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
+          message: "NoteProps is undefined",
+        }),
+      };
     }
-    if (_.isUndefined(noteProps.vault)) {
-      return DendronError.createFromStatus({
-        status: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
-        message: "note vault is undefined",
-      });
+    if (_.isUndefined(maybeNoteProps.vault)) {
+      return {
+        error: DendronError.createFromStatus({
+          status: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
+          message: "note vault is undefined",
+        }),
+      };
     }
-    return true;
+    if (!_.isString(maybeNoteProps.title)) {
+      return {
+        error: DendronError.createFromStatus({
+          status: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
+          message: "note title not set as string",
+        }),
+      };
+    }
+    return { data: true };
   }
 
-  static createFnameNoteMap(notes: NoteProps[], removeStubs?: boolean) {
-    const notesMap = new Map<string, NoteProps>();
-    const candidates = removeStubs ? notes.filter((n) => !n.stub) : notes;
-    candidates.map((n) => {
-      notesMap.set(n.fname, n);
-    });
-    return notesMap;
+  /**
+   * Given a filename, return the validity of the filename.
+   * If invalid, a reason string is also returned.
+   * Only the first encountered reason will be reported.
+   * @param fname filename
+   * @returns boolean value representing the validity of the filename, and the reason if invalid
+   */
+  static validateFname(fname: string): ValidateFnameResp {
+    // Each hierarchy string
+    // 1. should not be empty
+    // 2. should not have leading trailing whitespace
+    for (const value of fname.split(".")) {
+      const isEmpty = value === "";
+      if (isEmpty) {
+        return {
+          isValid: false,
+          reason: InvalidFilenameReason.EMPTY_HIERARCHY,
+        };
+      }
+      const hasLeadingOrTrailingWhitespace =
+        value.startsWith(" ") || value.endsWith(" ");
+      if (hasLeadingOrTrailingWhitespace) {
+        return {
+          isValid: false,
+          reason: InvalidFilenameReason.LEADING_OR_TRAILING_WHITESPACE,
+        };
+      }
+    }
+
+    // should not contain characters that SQLite doesn't allow
+    const matcher = /[(),']/;
+    const isSQLiteLegal = _.isNull(fname.match(matcher));
+    if (!isSQLiteLegal) {
+      return {
+        isValid: false,
+        reason: InvalidFilenameReason.ILLEGAL_CHARACTER,
+      };
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Given a file name, clean it so that it is valid
+   * as per {@link NoteUtils.validateFname}
+   * Optionally pass in the replace string that is used to replace
+   * the illegal characters
+   */
+  static cleanFname(opts: { fname: string; replaceWith?: string }) {
+    const { fname, replaceWith } = opts;
+    // replace illegal strings before cleaning up hierarchy strings
+    const fnameAfterReplace = fname.replace(
+      /[(),'']/g,
+      replaceWith === undefined ? " " : replaceWith
+    );
+    const hierarchies = fnameAfterReplace.split(".");
+    const cleanedFname = hierarchies
+      // trim leading / trailing whitespace
+      .map((value) => {
+        return _.trim(value, " ");
+      })
+      // cut out empty hierarchies
+      .filter((value) => value !== "")
+      .join(".");
+    return cleanedFname;
   }
 
   /** Generate a random color for `note`, but allow the user to override that color selection.
    *
-   * @param note The fname of note that you want to get the color of.
-   * @param notes: All notes in `engine.notes`, used to check the ancestors of `note`.
+   * @param fname The fname of note that you want to get the color of.
    * @returns The color, and whether this color was randomly generated or explicitly defined.
    */
-  static color(opts: {
-    fname: string;
-    vault?: DVault;
-    engine: DEngineClient;
-  }): {
+  static color(opts: { fname: string; vault?: DVault; note?: NotePropsMeta }): {
     color: string;
     type: "configured" | "generated";
   } {
-    const ancestors = NoteUtils.ancestors({ ...opts, includeSelf: true });
-    for (const note of ancestors) {
-      if (note.color) return { color: note.color, type: "configured" };
+    const { fname, note } = opts;
+    // TODO: Re-enable the ancestor color logic later
+    // const ancestors = NoteUtils.ancestors({ ...opts, includeSelf: true });
+    // for (const note of ancestors) {
+    //   if (note.color) return { color: note.color, type: "configured" };
+    // }
+    if (note && note.color) {
+      return { color: note.color, type: "configured" };
     }
-    return { color: randomColor(opts.fname), type: "generated" };
+    return { color: randomColor(fname), type: "generated" };
   }
 
   /** Get the ancestors of a note, in the order of the closest to farthest.
@@ -1372,7 +1080,7 @@ export class NoteUtils {
    * will find `foo`.
    *
    * ```ts
-   * const ancestorNotes = NoteUtils.ancestors({ fname, notes: engine.notes });
+   * const ancestorNotes = NoteUtils.ancestors({ fname });
    * for (const ancestor of ancestorNotes) { }
    * // or
    * const allAncestors = [...ancestorNotes];
@@ -1384,48 +1092,43 @@ export class NoteUtils {
    * @param opts.includeSelf: If true, note with `fname` itself will be included in the ancestors.
    * @param opts.nonStubOnly: If true, only notes that are not stubs will be included.
    */
-  static *ancestors(opts: {
+  static async ancestors(opts: {
     fname: string;
     vault?: DVault;
     engine: DEngineClient;
     includeSelf?: boolean;
     nonStubOnly?: boolean;
-  }): Generator<NoteProps> {
+  }): Promise<NotePropsMeta | undefined> {
     const { fname, engine, includeSelf, nonStubOnly } = opts;
     let { vault } = opts;
     let parts = fname.split(".");
-    let note: NoteProps | undefined = NoteUtils.getNotesByFnameFromEngine({
-      fname,
-      vault,
-      engine,
-    })[0];
+    let note: NotePropsMeta | undefined = (
+      await engine.findNotesMeta({
+        fname,
+        vault,
+      })
+    )[0];
 
     // Check if we need this note itself
-    if (note && includeSelf && !(nonStubOnly && note.stub)) yield note;
+    if (note && includeSelf && !(nonStubOnly && note.stub)) return note;
     if (fname === "root") return;
 
     // All ancestors within the same hierarchy
     while (parts.length > 1) {
       parts = parts.slice(undefined, parts.length - 1);
-      note = NoteUtils.getNotesByFnameFromEngine({
-        fname: parts.join("."),
-        vault,
-        engine,
-      })[0];
-      if (note && !(nonStubOnly && note.stub)) yield note;
+      // eslint-disable-next-line no-await-in-loop
+      note = (await engine.findNotesMeta({ fname: parts.join("."), vault }))[0];
+      if (note && !(nonStubOnly && note.stub)) return note;
     }
 
     // The ultimate ancestor of all notes is root
     if (note) {
       // Yielded at least one note
       if (!vault) vault = note.vault;
-      note = NoteUtils.getNotesByFnameFromEngine({
-        fname: "root",
-        engine,
-        vault,
-      })[0];
-      if (note) yield note;
+      note = (await engine.findNotesMeta({ fname: "root", vault }))[0];
+      return note;
     }
+    return;
   }
 
   static isNote(uri: URI) {
@@ -1469,10 +1172,6 @@ export class NoteUtils {
 
   static FAKE_ID_PREFIX = "fake-";
 
-  static isFakeId(id: string) {
-    return id.startsWith(this.FAKE_ID_PREFIX);
-  }
-
   /** Create a fake note object for something that is not actually a note in the workspace.
    *
    * For example when we need to render a piece of an actual note. If you need
@@ -1502,77 +1201,6 @@ type SchemaMatchResult = {
 };
 
 export class SchemaUtils {
-  /** The props of a template note that will get copied over when the template is applied. */
-  static TEMPLATE_COPY_PROPS: readonly (keyof NoteProps)[] = [
-    "desc",
-    "custom",
-    "color",
-    "tags",
-    "image",
-  ];
-
-  /**
-   * Apply template note to provided {@param note}.
-   *
-   * Changes include appending template note's body to end of provided note.
-   */
-  static applyTemplate(opts: {
-    templateNote: NoteProps;
-    note: NoteProps;
-    engine: DEngineClient;
-  }) {
-    const { templateNote, note } = opts;
-    if (templateNote.type === "note") {
-      const tempNoteProps = _.pick(templateNote, this.TEMPLATE_COPY_PROPS);
-      _.forEach(tempNoteProps, (v, k) => {
-        // @ts-ignore
-        note[k] = v;
-      });
-      // If note body exists, append template's body instead of overriding
-      if (note.body) {
-        note.body += `\n${templateNote.body}`;
-      } else {
-        note.body = templateNote.body;
-      }
-
-      // Apply date variable substitution to the body based on lodash interpolate delimiter if applicable
-      // E.g. if template has <%= CURRENT_YEAR %>, new note will contain 2021
-      const currentDate = Time.now();
-
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_YEAR\s*%>/g,
-        currentDate.toFormat("yyyy")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_MONTH\s*%>/g,
-        currentDate.toFormat("LL")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_WEEK\s*%>/g,
-        currentDate.toFormat("WW")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_DAY\s*%>/g,
-        currentDate.toFormat("dd")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_HOUR\s*%>/g,
-        currentDate.toFormat("HH")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_MINUTE\s*%>/g,
-        currentDate.toFormat("mm")
-      );
-      note.body = note.body.replace(
-        /<%=\s*CURRENT_SECOND\s*%>/g,
-        currentDate.toFormat("ss")
-      );
-
-      return true;
-    }
-    return false;
-  }
-
   static createFromSchemaRaw(opts: SchemaRaw & { vault: DVault }): SchemaProps {
     const schemaDataOpts: (keyof SchemaData)[] = [
       "namespace",
@@ -1812,50 +1440,18 @@ export class SchemaUtils {
     return path.join(root, fname + ".schema.yml");
   }
 
-  /**
-   @deprecated
-   */
-  static getSchemaModuleByFnameV4({
-    fname,
-    schemas,
-    wsRoot,
-    vault,
-  }: {
-    fname: string;
-    schemas: SchemaModuleDict | SchemaModuleProps[];
-    wsRoot: string;
-    vault: DVault;
-  }): SchemaModuleProps | undefined {
-    if (!_.isArray(schemas)) {
-      schemas = _.values(schemas);
-    }
-    const out = _.find(schemas, (ent) => {
-      if (ent.fname.toLowerCase() !== fname.toLowerCase()) {
-        return false;
-      }
-      if (vault) {
-        return VaultUtils.isEqual(vault, ent.vault, wsRoot);
-      }
-      return true;
-    });
-    return out;
-  }
-
-  static getSchema({ engine, id }: { engine: DEngineClient; id: string }) {
-    return engine.schemas[id];
-  }
-
-  static doesSchemaExist({
+  static async doesSchemaExist({
     id,
     engine,
   }: {
     id: string;
     engine: DEngineClient;
   }) {
-    return !_.isUndefined(engine.schemas[id]);
+    const resp = await engine.getSchema(id);
+    return !_.isUndefined(resp.data);
   }
 
-  static getSchemaFromNote({
+  static async getSchemaFromNote({
     note,
     engine,
   }: {
@@ -1863,7 +1459,7 @@ export class SchemaUtils {
     engine: DEngineClient;
   }) {
     if (note.schema) {
-      return engine.schemas[note.schema.moduleId];
+      return (await engine.getSchema(note.schema.moduleId)).data;
     }
     return;
   }
@@ -1877,8 +1473,8 @@ export class SchemaUtils {
   };
 
   /**
-   * Matcn and assign schemas to all nodes within
-   * a domain
+   * Match and assign schemas to all nodes within a domain. Note - only use this
+   * during engine init where SchemaModuleDict is available.
    *
    * @param domain
    * @param notes
@@ -1886,7 +1482,7 @@ export class SchemaUtils {
    */
   static matchDomain(
     domain: NoteProps,
-    notes: NotePropsDict,
+    notes: NotePropsByIdDict,
     schemas: SchemaModuleDict
   ) {
     const match = schemas[domain.fname];
@@ -1905,7 +1501,7 @@ export class SchemaUtils {
 
   static matchDomainWithSchema(opts: {
     noteCandidates: NoteProps[];
-    notes: NotePropsDict;
+    notes: NotePropsByIdDict;
     schemaCandidates: SchemaProps[];
     schemaModule: SchemaModuleProps;
     matchNamespace?: boolean;
@@ -1948,32 +1544,58 @@ export class SchemaUtils {
   }
 
   //  ^dtaatxvjb4s3
-  static matchPath(opts: {
+  static async matchPath(opts: {
     notePath: string;
-    schemaModDict: SchemaModuleDict;
-  }): SchemaMatchResult | undefined {
-    const { notePath, schemaModDict } = opts;
+    engine: DEngineClient; //
+  }): Promise<SchemaMatchResult | undefined> {
+    const { notePath } = opts;
     const domainName = DNodeUtils.domainName(notePath);
-    const match = schemaModDict[domainName];
-    if (!match) {
+    const resp = await opts.engine.getSchema(domainName);
+    if (!resp.data) {
       return;
     } else {
-      const domainSchema = match.schemas[match.root.id];
+      const domainSchema = resp.data.schemas[resp.data.root.id];
       if (domainName.length === notePath.length) {
         return {
           schema: domainSchema,
           notePath,
           namespace: domainSchema.data.namespace || false,
-          schemaModule: match,
+          schemaModule: resp.data,
         };
       }
       return SchemaUtils.matchPathWithSchema({
         notePath,
         matched: "",
         schemaCandidates: [domainSchema],
-        schemaModule: match,
+        schemaModule: resp.data,
       });
     }
+  }
+
+  /**
+   * Find proper schema from schema module that can be applied to note
+   */
+  static findSchemaFromModule(opts: {
+    notePath: string;
+    schemaModule: SchemaModuleProps;
+  }): SchemaMatchResult | undefined {
+    const { notePath, schemaModule } = opts;
+    const domainName = DNodeUtils.domainName(notePath);
+    const domainSchema = schemaModule.schemas[schemaModule.root.id];
+    if (domainName.length === notePath.length) {
+      return {
+        schema: domainSchema,
+        notePath,
+        namespace: domainSchema.data.namespace || false,
+        schemaModule,
+      };
+    }
+    return SchemaUtils.matchPathWithSchema({
+      notePath,
+      matched: "",
+      schemaCandidates: [domainSchema],
+      schemaModule,
+    });
   }
 
   /**
@@ -2004,7 +1626,6 @@ export class SchemaUtils {
     };
 
     const nextNotePath = getChildOfPath(notePath, matched);
-
     const match = SchemaUtils.matchNotePathWithSchemaAtLevel({
       notePath: nextNotePath,
       schemas: schemaCandidates,
@@ -2058,8 +1679,14 @@ export class SchemaUtils {
       const pattern = SchemaUtils.getPatternRecursive(sc, schemaModule.schemas);
       if (sc?.data?.namespace && matchNamespace) {
         namespace = true;
-        return minimatch(notePathClean, _.trimEnd(pattern, "/*"));
+        // current note is at the level of the namespace node.
+        // the glob pattern accounts for its immediate children (/*/*),
+        // so in order to match the current note, we should slice off
+        // the last bit of the glob pattern (/*)
+        return minimatch(notePathClean, pattern.slice(0, -2));
       } else {
+        // we are either trying to match the immediate child of a namespace node,
+        // or match a non-namespace regular schema. use the pattern as-is
         return minimatch(notePathClean, pattern);
       }
     });
@@ -2098,6 +1725,22 @@ export class SchemaUtils {
 
   static isSchemaUri(uri: URI) {
     return uri.fsPath.endsWith(".schema.yml");
+  }
+
+  static serializeModuleProps(moduleProps: SchemaModuleProps) {
+    const { version, imports, schemas } = moduleProps;
+    // TODO: filter out imported schemas
+    const out: any = {
+      version,
+      imports: [],
+      schemas: _.values(schemas).map((ent) =>
+        SchemaUtils.serializeSchemaProps(ent)
+      ),
+    };
+    if (imports) {
+      out.imports = imports;
+    }
+    return YAML.dump(out, { schema: JSON_SCHEMA });
   }
 
   // /**

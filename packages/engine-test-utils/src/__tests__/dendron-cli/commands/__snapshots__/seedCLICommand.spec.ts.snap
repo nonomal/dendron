@@ -24,14 +24,14 @@ commands:
             bubbleUpCreateNew: true
             fuzzThreshold: 0.2
     randomNote: {}
-    insertNote:
-        initialValue: templates
     insertNoteLink:
         aliasMode: none
         enableMultiSelect: false
     insertNoteIndex:
         enableMarker: false
-    copyNoteLink: {}
+    copyNoteLink:
+        aliasMode: title
+    templateHierarchy: template
 workspace:
     vaults:
         -
@@ -55,9 +55,9 @@ workspace:
         dateFormat: y.MM.dd.HHmmss
         addBehavior: asOwnDomain
     task:
-        name: ''
-        dateFormat: ''
-        addBehavior: childOfCurrent
+        name: task
+        dateFormat: y.MM.dd
+        addBehavior: asOwnDomain
         statusSymbols:
             '': ' '
             wip: w
@@ -68,6 +68,9 @@ workspace:
             delegated: l
             dropped: d
             pending: 'y'
+        taskCompleteStatus:
+            - done
+            - x
         prioritySymbols:
             H: high
             M: medium
@@ -76,6 +79,7 @@ workspace:
         createTaskSelectionType: selection2link
     graph:
         zoomSpeed: 1
+        createStub: false
     enableAutoCreateOnDefinition: false
     enableXVaultWikiLink: false
     enableRemoteVaultInit: true
@@ -94,14 +98,12 @@ preview:
     enableNoteTitleForLink: true
     enableFrontmatterTags: true
     enableHashesForFMTags: false
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     automaticallyShowPreview: false
 publishing:
     enableFMTitle: true
     enableNoteTitleForLink: true
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     copyAssets: true
@@ -121,7 +123,9 @@ publishing:
     enableFrontmatterTags: true
     enableHashesForFMTags: false
     enableRandomlyColoredTags: true
+    enableTaskNotes: true
     enablePrettyLinks: true
+    searchMode: lookup
     duplicateNoteBehavior:
         action: useVault
         payload:
@@ -173,14 +177,14 @@ commands:
             bubbleUpCreateNew: true
             fuzzThreshold: 0.2
     randomNote: {}
-    insertNote:
-        initialValue: templates
     insertNoteLink:
         aliasMode: none
         enableMultiSelect: false
     insertNoteIndex:
         enableMarker: false
-    copyNoteLink: {}
+    copyNoteLink:
+        aliasMode: title
+    templateHierarchy: template
 workspace:
     vaults:
         -
@@ -204,9 +208,9 @@ workspace:
         dateFormat: y.MM.dd.HHmmss
         addBehavior: asOwnDomain
     task:
-        name: ''
-        dateFormat: ''
-        addBehavior: childOfCurrent
+        name: task
+        dateFormat: y.MM.dd
+        addBehavior: asOwnDomain
         statusSymbols:
             '': ' '
             wip: w
@@ -217,6 +221,9 @@ workspace:
             delegated: l
             dropped: d
             pending: 'y'
+        taskCompleteStatus:
+            - done
+            - x
         prioritySymbols:
             H: high
             M: medium
@@ -225,6 +232,7 @@ workspace:
         createTaskSelectionType: selection2link
     graph:
         zoomSpeed: 1
+        createStub: false
     enableAutoCreateOnDefinition: false
     enableXVaultWikiLink: false
     enableRemoteVaultInit: true
@@ -246,14 +254,12 @@ preview:
     enableNoteTitleForLink: true
     enableFrontmatterTags: true
     enableHashesForFMTags: false
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     automaticallyShowPreview: false
 publishing:
     enableFMTitle: true
     enableNoteTitleForLink: true
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     copyAssets: true
@@ -273,7 +279,9 @@ publishing:
     enableFrontmatterTags: true
     enableHashesForFMTags: false
     enableRandomlyColoredTags: true
+    enableTaskNotes: true
     enablePrettyLinks: true
+    searchMode: lookup
     duplicateNoteBehavior:
         action: useVault
         payload:
@@ -323,14 +331,14 @@ commands:
             bubbleUpCreateNew: true
             fuzzThreshold: 0.2
     randomNote: {}
-    insertNote:
-        initialValue: templates
     insertNoteLink:
         aliasMode: none
         enableMultiSelect: false
     insertNoteIndex:
         enableMarker: false
-    copyNoteLink: {}
+    copyNoteLink:
+        aliasMode: title
+    templateHierarchy: template
 workspace:
     vaults: []
     journal:
@@ -343,9 +351,9 @@ workspace:
         dateFormat: y.MM.dd.HHmmss
         addBehavior: asOwnDomain
     task:
-        name: ''
-        dateFormat: ''
-        addBehavior: childOfCurrent
+        name: task
+        dateFormat: y.MM.dd
+        addBehavior: asOwnDomain
         statusSymbols:
             '': ' '
             wip: w
@@ -356,6 +364,9 @@ workspace:
             delegated: l
             dropped: d
             pending: 'y'
+        taskCompleteStatus:
+            - done
+            - x
         prioritySymbols:
             H: high
             M: medium
@@ -364,6 +375,7 @@ workspace:
         createTaskSelectionType: selection2link
     graph:
         zoomSpeed: 1
+        createStub: false
     enableAutoCreateOnDefinition: false
     enableXVaultWikiLink: false
     enableRemoteVaultInit: true
@@ -380,14 +392,12 @@ preview:
     enableNoteTitleForLink: true
     enableFrontmatterTags: true
     enableHashesForFMTags: false
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     automaticallyShowPreview: false
 publishing:
     enableFMTitle: true
     enableNoteTitleForLink: true
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     copyAssets: true
@@ -407,7 +417,9 @@ publishing:
     enableFrontmatterTags: true
     enableHashesForFMTags: false
     enableRandomlyColoredTags: true
+    enableTaskNotes: true
     enablePrettyLinks: true
+    searchMode: lookup
 "
 `;
 
@@ -427,14 +439,14 @@ commands:
             bubbleUpCreateNew: true
             fuzzThreshold: 0.2
     randomNote: {}
-    insertNote:
-        initialValue: templates
     insertNoteLink:
         aliasMode: none
         enableMultiSelect: false
     insertNoteIndex:
         enableMarker: false
-    copyNoteLink: {}
+    copyNoteLink:
+        aliasMode: title
+    templateHierarchy: template
 workspace:
     vaults:
         -
@@ -449,9 +461,9 @@ workspace:
         dateFormat: y.MM.dd.HHmmss
         addBehavior: asOwnDomain
     task:
-        name: ''
-        dateFormat: ''
-        addBehavior: childOfCurrent
+        name: task
+        dateFormat: y.MM.dd
+        addBehavior: asOwnDomain
         statusSymbols:
             '': ' '
             wip: w
@@ -462,6 +474,9 @@ workspace:
             delegated: l
             dropped: d
             pending: 'y'
+        taskCompleteStatus:
+            - done
+            - x
         prioritySymbols:
             H: high
             M: medium
@@ -470,6 +485,7 @@ workspace:
         createTaskSelectionType: selection2link
     graph:
         zoomSpeed: 1
+        createStub: false
     enableAutoCreateOnDefinition: false
     enableXVaultWikiLink: false
     enableRemoteVaultInit: true
@@ -486,14 +502,12 @@ preview:
     enableNoteTitleForLink: true
     enableFrontmatterTags: true
     enableHashesForFMTags: false
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     automaticallyShowPreview: false
 publishing:
     enableFMTitle: true
     enableNoteTitleForLink: true
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     copyAssets: true
@@ -513,7 +527,9 @@ publishing:
     enableFrontmatterTags: true
     enableHashesForFMTags: false
     enableRandomlyColoredTags: true
+    enableTaskNotes: true
     enablePrettyLinks: true
+    searchMode: lookup
     duplicateNoteBehavior:
         action: useVault
         payload:
@@ -550,14 +566,14 @@ commands:
             bubbleUpCreateNew: true
             fuzzThreshold: 0.2
     randomNote: {}
-    insertNote:
-        initialValue: templates
     insertNoteLink:
         aliasMode: none
         enableMultiSelect: false
     insertNoteIndex:
         enableMarker: false
-    copyNoteLink: {}
+    copyNoteLink:
+        aliasMode: title
+    templateHierarchy: template
 workspace:
     vaults:
         -
@@ -572,9 +588,9 @@ workspace:
         dateFormat: y.MM.dd.HHmmss
         addBehavior: asOwnDomain
     task:
-        name: ''
-        dateFormat: ''
-        addBehavior: childOfCurrent
+        name: task
+        dateFormat: y.MM.dd
+        addBehavior: asOwnDomain
         statusSymbols:
             '': ' '
             wip: w
@@ -585,6 +601,9 @@ workspace:
             delegated: l
             dropped: d
             pending: 'y'
+        taskCompleteStatus:
+            - done
+            - x
         prioritySymbols:
             H: high
             M: medium
@@ -593,6 +612,7 @@ workspace:
         createTaskSelectionType: selection2link
     graph:
         zoomSpeed: 1
+        createStub: false
     enableAutoCreateOnDefinition: false
     enableXVaultWikiLink: false
     enableRemoteVaultInit: true
@@ -609,14 +629,12 @@ preview:
     enableNoteTitleForLink: true
     enableFrontmatterTags: true
     enableHashesForFMTags: false
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     automaticallyShowPreview: false
 publishing:
     enableFMTitle: true
     enableNoteTitleForLink: true
-    enableMermaid: true
     enablePrettyRefs: true
     enableKatex: true
     copyAssets: true
@@ -636,7 +654,9 @@ publishing:
     enableFrontmatterTags: true
     enableHashesForFMTags: false
     enableRandomlyColoredTags: true
+    enableTaskNotes: true
     enablePrettyLinks: true
+    searchMode: search
     duplicateNoteBehavior:
         action: useVault
         payload:

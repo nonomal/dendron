@@ -1,4 +1,6 @@
-import { DendronError, DendronTreeViewKey } from "@dendronhq/common-all";
+import { DendronError } from "@dendronhq/common-all";
+import { PodUtils } from "@dendronhq/pods-core";
+import { ensureDirSync } from "fs-extra";
 import _ from "lodash";
 import { IDendronExtension } from "./dendronExtensionInterface";
 import { IWSUtilsV2 } from "./WSUtilsV2Interface";
@@ -22,6 +24,10 @@ export class ExtensionProvider {
     }
 
     return ExtensionProvider.extension;
+  }
+
+  static getCommentThreadsState() {
+    return ExtensionProvider.extension.getCommentThreadsState();
   }
 
   static getDWorkspace() {
@@ -48,14 +54,14 @@ export class ExtensionProvider {
     return ExtensionProvider.getExtension().getWorkspaceConfig();
   }
 
-  /**
-   * @deprecated. See {@link IDendronExtension.getTreeView}
-   */
-  static getTreeView(key: DendronTreeViewKey) {
-    return ExtensionProvider.getExtension().getTreeView(key);
-  }
-
   static register(extension: IDendronExtension) {
     ExtensionProvider.extension = extension;
+  }
+
+  static getPodsDir() {
+    const { wsRoot } = ExtensionProvider.getDWorkspace();
+    const podsDir = PodUtils.getPodDir({ wsRoot });
+    ensureDirSync(podsDir);
+    return podsDir;
   }
 }

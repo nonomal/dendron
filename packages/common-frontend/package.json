@@ -1,8 +1,8 @@
 {
   "name": "@dendronhq/common-frontend",
-  "version": "0.91.0",
+  "version": "0.124.0",
   "description": "common-frontend",
-  "license": "GPLv3",
+  "license": "Apache 2.0",
   "repository": {
     "type": "git",
     "url": "ssh://git@github.com/dendronhq/dendron.git",
@@ -30,18 +30,12 @@
     "build": "yarn compile",
     "buildCI": "yarn compile",
     "compile": "tsc -p tsconfig.build.json ",
-    "test": "echo 0",
-    "coverage": "jest --coverage",
-    "watch": "yarn compile --watch",
-    "test:unit": "echo 0",
-    "test:unit:debug": "echo 0",
-    "test:watch": "echo 0"
+    "watch": "yarn compile --watch"
   },
   "dependencies": {
     "@aws-amplify/core": "^4.0.2",
-    "@dendronhq/common-all": "^0.91.0",
+    "@dendronhq/common-all": "^0.124.0",
     "@reduxjs/toolkit": "^1.5.1",
-    "antd": "^4.15.4",
     "lodash": "^4.17.20",
     "querystring": "^0.2.1",
     "react": "^17.0.2",
@@ -64,9 +58,5 @@
   },
   "publishConfig": {
     "access": "public"
-  },
-  "jest": {
-    "preset": "ts-jest"
-  },
-  "gitHead": "b9b209acf808ad7a581bf98b1d0f90ef2bf4b833"
+  }
 }

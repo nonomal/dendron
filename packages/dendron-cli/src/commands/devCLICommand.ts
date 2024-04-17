@@ -2,16 +2,20 @@ import {
   assertUnreachable,
   CLIEvents,
   DendronError,
-  error2PlainObject,
+  DVault,
   ERROR_STATUS,
+  NoteProps,
+  NoteUtils,
+  stringifyError,
+  TimeUtils,
 } from "@dendronhq/common-all";
 import {
+  DConfig,
   readYAML,
   SegmentClient,
   TelemetryStatus,
 } from "@dendronhq/common-server";
 import {
-  DConfig,
   MigrationChangeSetStatus,
   MigrationService,
   MigrationUtils,
@@ -22,10 +26,10 @@ import fs from "fs-extra";
 import _ from "lodash";
 import path from "path";
 import yargs from "yargs";
-import { CLIAnalyticsUtils } from "..";
+import { CLIAnalyticsUtils, setupEngine } from "..";
 import {
   BuildUtils,
-  ExtensionTarget,
+  ExtensionType,
   LernaUtils,
   PublishEndpoint,
   SemverVersion,
@@ -39,9 +43,11 @@ type CommandCLIOpts = {
 export enum DevCommands {
   GENERATE_JSON_SCHEMA_FROM_CONFIG = "generate_json_schema_from_config",
   BUILD = "build",
+  CREATE_TEST_VAULT = "create_test_vault",
   BUMP_VERSION = "bump_version",
   PUBLISH = "publish",
   SYNC_ASSETS = "sync_assets",
+  SYNC_TUTORIAL = "sync_tutorial",
   PREP_PLUGIN = "prep_plugin",
   PACKAGE_PLUGIN = "package_plugin",
   INSTALL_PLUGIN = "install_plugin",
@@ -55,29 +61,50 @@ export enum DevCommands {
 type CommandOpts = CommandCLIOpts &
   CommandCommonProps &
   Partial<BuildCmdOpts> &
-  Partial<RunMigrationOpts>;
+  Partial<RunMigrationOpts> &
+  Partial<CreateTestVaultOpts>;
 
 type CommandOutput = Partial<{ error: DendronError; data: any }>;
 
 type BuildCmdOpts = {
   publishEndpoint: PublishEndpoint;
   fast?: boolean;
-  extensionTarget: ExtensionTarget;
+  extensionType: ExtensionType;
+  extensionTarget?: string;
+  skipSentry?: boolean;
 } & BumpVersionOpts &
   PrepPluginOpts;
+
+type CreateTestVaultOpts = {
+  wsRoot: string;
+  /**
+   * Location of json data
+   */
+  jsonData: string;
+} & CommandCLIOpts;
 
 type BumpVersionOpts = {
   upgradeType: SemverVersion;
 } & CommandCLIOpts;
 
 type PrepPluginOpts = {
-  extensionTarget: ExtensionTarget;
+  extensionType: ExtensionType;
 } & CommandCLIOpts;
 
 type RunMigrationOpts = {
   migrationVersion: string;
   wsRoot: string;
 } & CommandCLIOpts;
+
+type JsonDataForCreateTestVault = {
+  numNotes: number;
+  numVaults: number;
+  ratios: {
+    tag: number;
+    user: number;
+    reg: number;
+  };
+};
 
 export { CommandOpts as DevCLICommandOpts };
 
@@ -118,12 +145,20 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
       describe: "where to publish",
       choices: Object.values(PublishEndpoint),
     });
+    args.option("extensionType", {
+      describe:
+        "extension name to publish in the marketplace (Dendron / Nightly)",
+      choices: Object.values(ExtensionType),
+    });
     args.option("extensionTarget", {
-      describe: "extension name to publish in the marketplace",
-      choices: Object.values(ExtensionTarget),
+      describe:
+        "extension target to pass to vsce to specify platform and architecture",
     });
     args.option("fast", {
       describe: "skip some checks",
+    });
+    args.option("skipSentry", {
+      describe: "skip upload source map to sentry",
     });
     args.option("migrationVersion", {
       describe: "migration version to run",
@@ -132,6 +167,9 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     args.option("wsRoot", {
       describe: "root directory of the Dendron workspace",
     });
+    args.option("jsonData", {
+      describe: "json data to pass into command",
+    });
   }
 
   async enrichArgs(args: CommandCLIOpts) {
@@ -139,16 +177,60 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     return { data: { ...args } };
   }
 
+  async createTestVault({
+    wsRoot,
+    payload,
+  }: {
+    wsRoot: string;
+    payload: JsonDataForCreateTestVault;
+  }) {
+    fs.ensureDirSync(wsRoot);
+    fs.emptyDirSync(wsRoot);
+    this.print(`creating test vault with ${JSON.stringify(payload)}`);
+
+    const vaults: DVault[] = _.times(payload.numVaults, (idx) => {
+      return { fsPath: `vault${idx}` };
+    });
+    const svc = await WorkspaceService.createWorkspace({
+      additionalVaults: vaults,
+      wsVault: { fsPath: "notes", selfContained: true },
+      wsRoot,
+      createCodeWorkspace: false,
+      useSelfContainedVault: true,
+    });
+    await svc.initialize();
+
+    const ratioTotal = _.values(payload.ratios).reduce(
+      (acc, cur) => acc + cur,
+      0
+    );
+    const vaultTotal = payload.numVaults;
+    const { engine, server } = await setupEngine({ wsRoot });
+    this.print(`vaults: ${JSON.stringify(svc.vaults)}`);
+
+    await Promise.all(
+      _.keys(payload.ratios).map(async (key) => {
+        const numNotes = Math.round(
+          (payload.ratios[key as keyof JsonDataForCreateTestVault["ratios"]] /
+            ratioTotal) *
+            payload.numNotes
+        );
+        this.print(`creating ${numNotes} ${key} notes...`);
+        const vault = svc.vaults[_.random(0, vaultTotal - 1)];
+        const notes: NoteProps[] = await Promise.all(
+          _.times(numNotes, async (i) => {
+            return NoteUtils.create({ fname: `${key}.${i}`, vault });
+          })
+        );
+        await engine.bulkWriteNotes({ notes });
+      })
+    );
+    return { server };
+  }
+
   async generateJSONSchemaFromConfig() {
     const repoRoot = process.cwd();
     const pkgRoot = path.join(repoRoot, "packages", "engine-server");
-    const nextOutputPath = path.join(
-      repoRoot,
-      "packages",
-      "dendron-next-server",
-      "data",
-      "dendron-yml.validator.json"
-    );
     const commonOutputPath = path.join(
       repoRoot,
       "packages",
@@ -178,7 +260,6 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     const schemaString = JSON.stringify(schema, null, 2);
     fs.ensureDirSync(path.dirname(pluginOutputPath));
     await Promise.all([
-      fs.writeFile(nextOutputPath, schemaString),
       fs.writeFile(commonOutputPath, schemaString),
       fs.writeFile(pluginOutputPath, schemaString),
     ]);
@@ -206,6 +287,26 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
           await this.build(opts);
           return { error: null };
         }
+        case DevCommands.CREATE_TEST_VAULT: {
+          if (!this.validateCreateTestVaultArgs(opts)) {
+            return {
+              error: new DendronError({
+                message: "missing required options",
+              }),
+            };
+          }
+          const { wsRoot, jsonData } = opts;
+          const payload = fs.readJSONSync(
+            jsonData
+          ) as JsonDataForCreateTestVault;
+          this.print(`reading json data from ${jsonData}`);
+          const { server } = await this.createTestVault({ wsRoot, payload });
+          if (server.close) {
+            this.print("closing server...");
+            server.close();
+          }
+          return { error: null };
+        }
         case DevCommands.BUMP_VERSION: {
           if (!this.validateBumpVersionArgs(opts)) {
             return {
@@ -219,6 +320,10 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
         }
         case DevCommands.SYNC_ASSETS: {
           await this.syncAssets(opts);
+          return { error: null };
+        }
+        case DevCommands.SYNC_TUTORIAL: {
+          this.syncTutorial();
           return { error: null };
         }
         case DevCommands.PUBLISH: {
@@ -248,7 +353,7 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
             };
           }
 
-          await BuildUtils.prepPluginPkg(opts.extensionTarget);
+          await BuildUtils.prepPluginPkg(opts.extensionType);
           return { error: null };
         }
         case DevCommands.PACKAGE_PLUGIN: {
@@ -304,7 +409,7 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
       if (err instanceof DendronError) {
         this.print(["status:", err.status, err.message].join(" "));
       } else {
-        this.print("unknown error " + error2PlainObject(err));
+        this.print("unknown error " + stringifyError(err));
       }
       return { error: err };
     }
@@ -351,16 +456,19 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     await this.syncAssets(opts);
 
     this.print("prep repo...");
-    await BuildUtils.prepPluginPkg();
+    await BuildUtils.prepPluginPkg(opts.extensionType);
 
     if (!shouldPublishLocal) {
       this.print(
         "sleeping 2 mins for remote npm registry to have packages ready"
       );
-      await new Promise((r) => setTimeout(r, 120000));
+      await TimeUtils.sleep(2 * 60 * 1000);
     } else {
-      this.print("sleeping 3s for local npm registry to have packages ready");
-      await new Promise((r) => setTimeout(r, 30000));
+      const localSleepSeconds = 15;
+      this.print(
+        `sleeping ${localSleepSeconds}s for local npm registry to have packages ready`
+      );
+      await TimeUtils.sleep(localSleepSeconds * 1000);
     }
 
     this.print("install deps...");
@@ -368,11 +476,6 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
 
     this.print("compiling plugin...");
     await BuildUtils.compilePlugin(opts);
-
-    if (opts.extensionTarget === ExtensionTarget.NIGHTLY) {
-      this.print("modifying plugin manifest for nightly target...");
-      await BuildUtils.prepPluginPkg(ExtensionTarget.NIGHTLY);
-    }
 
     this.print("package deps...");
     await BuildUtils.packagePluginDependencies(opts);
@@ -397,8 +500,6 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
    */
   async syncAssets({ fast }: { fast?: boolean }) {
     if (!fast) {
-      this.print("build next server for prod...");
-      BuildUtils.buildNextServer();
       this.print("build plugin views for prod...");
       BuildUtils.buildPluginViews();
     }
@@ -406,6 +507,65 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     const { staticPath } = await BuildUtils.syncStaticAssets();
     await BuildUtils.syncStaticAssetsToNextjsTemplate();
     return { staticPath };
+  }
+
+  syncTutorial() {
+    const dendronSiteVaultPath = path.join(
+      BuildUtils.getLernaRoot(),
+      "docs",
+      "seeds",
+      "dendron.dendron-site",
+      "vault"
+    );
+
+    const tutorialDirPath = path.join(
+      BuildUtils.getPluginRootPath(),
+      "assets",
+      "dendron-ws",
+      "tutorial"
+    );
+
+    const commonDirPath = path.join(tutorialDirPath, "common");
+
+    // wipe everything in /assets/dendron-ws/tutorial/treatments
+    const treatmentsDirPath = path.join(tutorialDirPath, "treatments");
+
+    fs.removeSync(treatmentsDirPath);
+    fs.ensureDirSync(treatmentsDirPath);
+
+    // grab everything from `tutorial.*` hierarchy
+    const tutorialNotePaths = fs
+      .readdirSync(dendronSiteVaultPath)
+      .filter((basename) => {
+        return (
+          basename.startsWith("tutorial.") &&
+          basename.endsWith(".md") &&
+          basename !== "tutorial.md"
+        );
+      });
+    // determine treatment name
+    const treatmentNames = _.uniq(
+      tutorialNotePaths.map((basename) => basename.split(".")[1])
+    );
+
+    treatmentNames.forEach((treatmentName) => {
+      // create directories for treatment
+      const treatmentNameDirPath = path.join(treatmentsDirPath, treatmentName);
+      fs.ensureDirSync(treatmentNameDirPath);
+      // copy in commons (root, schema, assetdir)
+      fs.copySync(commonDirPath, treatmentNameDirPath);
+      // copy in individual treated tutorial notes
+      tutorialNotePaths
+        .filter((basename) => basename.startsWith(`tutorial.${treatmentName}`))
+        .forEach((basename) => {
+          const src = path.join(dendronSiteVaultPath, basename);
+          const dest = path.join(
+            treatmentNameDirPath,
+            basename.replace(`tutorial.${treatmentName}`, "tutorial")
+          );
+          fs.copyFileSync(src, dest);
+        });
+    });
   }
 
   validateBuildArgs(opts: CommandOpts): opts is BuildCmdOpts {
@@ -422,9 +582,16 @@ export class DevCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     return true;
   }
 
+  validateCreateTestVaultArgs(opts: CommandOpts): opts is CreateTestVaultOpts {
+    if (!opts.wsRoot || !opts.jsonData) {
+      return false;
+    }
+    return true;
+  }
+
   validatePrepPluginArgs(opts: CommandOpts): opts is PrepPluginOpts {
-    if (opts.extensionTarget) {
-      return Object.values(ExtensionTarget).includes(opts.extensionTarget);
+    if (opts.extensionType) {
+      return Object.values(ExtensionType).includes(opts.extensionType);
     }
     return true;
   }

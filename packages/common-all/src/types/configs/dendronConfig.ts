@@ -5,7 +5,7 @@ import {
 import {
   DendronWorkspaceConfig,
   genDefaultWorkspaceConfig,
-} from "./workspace/workspace";
+} from "./workspace/DendronWorkspaceConfig";
 import {
   DendronPreviewConfig,
   genDefaultPreviewConfig,
@@ -14,16 +14,16 @@ import {
   DendronPublishingConfig,
   genDefaultPublishingConfig,
 } from "./publishing/publishing";
-import { DendronGlobalConfig, genDefaultGlobalConfig } from "./global/global";
-import { DendronDevConfig, genDefaultDevConfig } from "./dev/dev";
+import { DendronGlobalConfig } from "./global/global";
+import { DendronDevConfig, genDefaultDevConfig } from "./dev/DendronDevConfig";
 
 /**
  * DendronConfig
  * This is the top level config that will hold everything.
  */
 export type DendronConfig = {
-  version?: number;
-  global: DendronGlobalConfig;
+  version: number;
+  global?: DendronGlobalConfig;
   commands: DendronCommandConfig;
   workspace: DendronWorkspaceConfig;
   preview: DendronPreviewConfig;
@@ -40,7 +40,7 @@ export type TopLevelDendronConfig = keyof DendronConfig;
  */
 export function genDefaultDendronConfig(): DendronConfig {
   return {
-    global: genDefaultGlobalConfig(),
+    version: 5,
     commands: genDefaultCommandConfig(),
     workspace: genDefaultWorkspaceConfig(),
     preview: genDefaultPreviewConfig(),

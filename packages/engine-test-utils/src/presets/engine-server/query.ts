@@ -1,4 +1,4 @@
-import { DNodeUtils, NoteUtils, SchemaUtils } from "@dendronhq/common-all";
+import { DNodeUtils } from "@dendronhq/common-all";
 import {
   TestPresetEntryV4,
   SCHEMA_PRESETS_V4,
@@ -8,36 +8,12 @@ import _ from "lodash";
 import { setupBasic, setupEmpty } from "./utils";
 
 const SCHEMAS = {
-  // TODO: multi-vault, this gets overwritten
-  // EMPTY_QS: new TestPresetEntryV4(
-  //   async ({ vaults, engine, wsRoot }) => {
-  //     const vault = vaults[0];
-  //     const schemas = engine.schemas;
-  //     const { data } = await engine.querySchema("");
-  //
-  //     const expectedNote = SchemaUtils.getSchemaModuleByFnameV4({
-  //       fname: "root",
-  //       schemas,
-  //       wsRoot,
-  //       vault,
-  //     });
-  //     return [
-  //       {
-  //         actual: data[0],
-  //         expected: expectedNote,
-  //       },
-  //     ];
-  //   },
-  //   {
-  //     preSetupHook: setupBasic,
-  //   }
-  // ),
   STAR_QUERY: new TestPresetEntryV4(
     async ({ engine }) => {
       const { data } = await engine.querySchema("*");
       return [
         {
-          actual: data.length,
+          actual: data!.length,
           expected: 2,
         },
       ];
@@ -47,17 +23,10 @@ const SCHEMAS = {
     }
   ),
   SIMPLE: new TestPresetEntryV4(
-    async ({ engine, vaults, wsRoot }) => {
-      const schemas = engine.schemas;
-      const vault = vaults[0];
+    async ({ engine }) => {
       const sid = SCHEMA_PRESETS_V4.SCHEMA_SIMPLE.fname;
       const { data } = await engine.querySchema(sid);
-      const expectedSchema = SchemaUtils.getSchemaModuleByFnameV4({
-        fname: sid,
-        wsRoot,
-        schemas,
-        vault,
-      });
+      const expectedSchema = (await engine.getSchema(sid)).data!;
       const fooSchema = _.find(data, { fname: sid });
       return [
         {
@@ -76,18 +45,17 @@ const NOTES = {
   EMPTY_QS: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
       const vault = vaults[0];
-      const notes = engine.notes;
-      const { data } = await engine.queryNotes({
+      const data = await engine.queryNotes({
         qs: "",
         originalQS: "",
         vault,
       });
-      const expectedNote = NoteUtils.getNoteByFnameV5({
-        wsRoot: engine.wsRoot,
-        fname: "root",
-        notes,
-        vault,
-      });
+      const expectedNote = (
+        await engine.findNotes({
+          fname: "root",
+          vault,
+        })
+      )[0];
       const matchNote = _.find(data, { id: expectedNote?.id });
       return [
         {
@@ -103,7 +71,7 @@ const NOTES = {
   // Querying for non-existing note should return empty []
   MISSING_QUERY: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
-      const { data } = await engine.queryNotes({
+      const data = await engine.queryNotes({
         qs: "bar",
         originalQS: "bar",
         vault: vaults[0],
@@ -123,14 +91,14 @@ const NOTES = {
   STAR_QUERY: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
       const vault = vaults[0];
-      const { data } = await engine.queryNotes({
+      const data = await engine.queryNotes({
         qs: "*",
         originalQS: "*",
         vault,
       });
       return [
         {
-          actual: data.length,
+          actual: data?.length,
           expected: 4,
         },
       ];
@@ -142,26 +110,25 @@ const NOTES = {
   DOMAIN_QUERY_WITH_SCHEMA: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
       const vault = vaults[0];
-      const notes = engine.notes;
       const fname = NOTE_PRESETS_V4.NOTE_SIMPLE.fname;
-      const { data } = await engine.queryNotes({
+      const data = await engine.queryNotes({
         qs: fname,
         originalQS: fname,
         vault,
       });
-      const expectedNote = NoteUtils.getNoteByFnameV5({
-        fname,
-        notes,
-        vault,
-        wsRoot: engine.wsRoot,
-      });
+      const expectedNote = (
+        await engine.findNotes({
+          fname,
+          vault,
+        })
+      )[0];
       return [
         {
-          actual: data[0],
+          actual: data ? data[0] : undefined,
           expected: expectedNote,
         },
         {
-          actual: data[0].schema,
+          actual: data ? data[0].schema : undefined,
           expected: {
             moduleId: SCHEMA_PRESETS_V4.SCHEMA_SIMPLE.fname,
             schemaId: SCHEMA_PRESETS_V4.SCHEMA_SIMPLE.fname,
@@ -176,19 +143,18 @@ const NOTES = {
   CHILD_QUERY_WITH_SCHEMA: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
       const vault = vaults[0];
-      const notes = engine.notes;
       const fname = NOTE_PRESETS_V4.NOTE_SIMPLE_CHILD.fname;
-      const { data } = await engine.queryNotes({
+      const data = await engine.queryNotes({
         qs: fname,
         originalQS: fname,
         vault,
       });
-      const expectedNote = NoteUtils.getNoteByFnameV5({
-        fname,
-        notes,
-        vault,
-        wsRoot: engine.wsRoot,
-      });
+      const expectedNote = (
+        await engine.findNotes({
+          fname,
+          vault,
+        })
+      )[0];
       const matchNote = _.find(data, { id: expectedNote?.id });
       return [
         {

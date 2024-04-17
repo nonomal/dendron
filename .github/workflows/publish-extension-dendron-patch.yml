@@ -29,12 +29,12 @@ jobs:
           git config --global user.email github-actions@github.com
 
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v3
         with:
-          node-version: 14.x
+          node-version: 16.x
 
       - name: Set Environment Variables
         run: |
@@ -51,6 +51,9 @@ jobs:
 
       - name: Yarn Setup
         run: yarn setup
+
+      - name: Update schema file
+        run: yarn gen:data
 
       - name: Build the VSIX and Publish to NPM Registry
         env:
@@ -86,11 +89,13 @@ jobs:
         run: yarn deploy:ovsx:vsix ${{ env.VSIX_FILE_NAME }}
 
       - name: Tag Release on Github
+        if: success() || failure()
         run: |
           git tag $DENDRON_RELEASE_VERSION
           git push origin $DENDRON_RELEASE_VERSION
 
       - name: Raise Pull Request back to master
+        if: success() || failure()
         uses: repo-sync/pull-request@v2
         with:
           destination_branch: "master"

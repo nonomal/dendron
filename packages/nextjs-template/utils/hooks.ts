@@ -1,26 +1,36 @@
 import {
   ConfigUtils,
   FuseEngine,
-  IntermediateDendronConfig,
+  DendronConfig,
   NoteProps,
-  NotePropsDict,
+  NotePropsByIdDict,
 } from "@dendronhq/common-all";
 import { verifyEngineSliceState } from "@dendronhq/common-frontend";
 import { Grid } from "antd";
 import _ from "lodash";
-import { useRouter } from "next/router";
+import { NextRouter, useRouter } from "next/router";
 import React from "react";
 import { useEngineAppSelector } from "../features/engine/hooks";
-import { getNoteRouterQuery } from "./etc";
-import { fetchNoteBody, fetchNotes } from "./fetchers";
+import { fetchNoteBody } from "./fetchers";
+
+export type NoteRouterQuery = {
+  id: string;
+};
 
 export type DendronRouterProps = ReturnType<typeof useDendronRouter>;
+
+export function getNoteRouterQuery(router: NextRouter) {
+  return router.query as Partial<NoteRouterQuery>;
+}
 
 export function useDendronRouter() {
   const router = useRouter();
   const query = getNoteRouterQuery(router);
-  const getNoteUrl = (id: string, opts: { noteIndex: NoteProps }) => {
-    if (id === opts.noteIndex.id) {
+  const getNoteUrl = (
+    id: string,
+    opts: { noteIndex: NoteProps | undefined }
+  ) => {
+    if (id === opts?.noteIndex?.id) {
       return `/`;
     }
     return `/notes/${id}`;
@@ -32,7 +42,7 @@ export function useDendronRouter() {
   const getActiveNote = ({
     notes,
   }: {
-    notes: NotePropsDict;
+    notes: NotePropsByIdDict;
   }): NoteProps | undefined => {
     const maybeIdByQuery = query?.id;
     return !_.isUndefined(maybeIdByQuery) ? notes[maybeIdByQuery] : undefined;
@@ -61,22 +71,31 @@ export function useDendronRouter() {
  * Get instance of fuse js
  * @param setNoteIndex
  */
-export function useDendronLookup() {
+export function useDendronLookup(notes?: NotePropsByIdDict) {
   const engine = useEngineAppSelector((state) => state.engine);
-  const config = engine.config as IntermediateDendronConfig;
+  const config = engine.config as DendronConfig;
   const fuzzThreshold = ConfigUtils.getLookup(config).note.fuzzThreshold;
 
   const [noteIndex, setNoteIndex] = React.useState<FuseEngine | undefined>(
     undefined
   );
   React.useEffect(() => {
-    fetchNotes().then(async (noteData) => {
-      const { notes } = noteData;
+    if (notes) {
       const noteIndex = new FuseEngine({ mode: "fuzzy", fuzzThreshold });
-      noteIndex.updateNotesIndex(notes);
+      noteIndex.notesIndex.setCollection(
+        _.map(notes, ({ fname, title, id, vault, updated, stub }, _key) => ({
+          fname,
+          id,
+          title,
+          vault,
+          updated,
+          stub,
+        }))
+      );
+
       setNoteIndex(noteIndex);
-    });
-  }, []);
+    }
+  }, [notes]);
   return noteIndex;
 }
 

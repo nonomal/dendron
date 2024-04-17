@@ -10,7 +10,6 @@ import * as vscode from "vscode";
 import { ExtensionProvider } from "../../ExtensionProvider";
 import ReferenceProvider from "../../features/ReferenceProvider";
 import { VSCodeUtils } from "../../vsCodeUtils";
-import { getDWorkspace } from "../../workspace";
 import { WSUtils } from "../../WSUtils";
 import { expect } from "../testUtilsv2";
 import {
@@ -52,9 +51,14 @@ const checkRefs = ({
   expect(links?.length).toEqual(2);
   const firstLineRange = new vscode.Range(
     new vscode.Position(7, 0),
-    new vscode.Position(8, 0)
+    new vscode.Position(7, 18)
   );
-  expect(links!.map((l) => l.range)).toEqual([firstLineRange, firstLineRange]);
+
+  const secondLineRange = new vscode.Range(
+    new vscode.Position(7, 0),
+    new vscode.Position(7, 14)
+  );
+  expect(links!.map((l) => l.range)).toEqual([firstLineRange, secondLineRange]);
   expect(links!.map((l) => l.uri.fsPath.toLocaleLowerCase())).toEqual(
     refs.map((note) =>
       NoteUtils.getFullPath({ note, wsRoot }).toLocaleLowerCase()
@@ -172,7 +176,10 @@ suite("GIVEN ReferenceProvider", function () {
           const links = await provideForNote(editor);
           expect(links!.map((l) => l.uri.fsPath)).toEqual(
             [noteWithTarget1, noteWithTarget2].map((note) =>
-              NoteUtils.getFullPath({ note, wsRoot: getDWorkspace().wsRoot })
+              NoteUtils.getFullPath({
+                note,
+                wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
+              })
             )
           );
           done();
@@ -202,7 +209,10 @@ suite("GIVEN ReferenceProvider", function () {
           const links = await provideForNote(editor);
           expect(links!.map((l) => l.uri.fsPath)).toEqual(
             [noteWithTarget1, noteWithTarget2].map((note) =>
-              NoteUtils.getFullPath({ note, wsRoot: getDWorkspace().wsRoot })
+              NoteUtils.getFullPath({
+                note,
+                wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
+              })
             )
           );
           done();
@@ -230,7 +240,10 @@ suite("GIVEN ReferenceProvider", function () {
           const links = await provideForNote(editor);
           expect(links!.map((l) => l.uri.fsPath)).toEqual(
             [noteWithLink].map((note) =>
-              NoteUtils.getFullPath({ note, wsRoot: getDWorkspace().wsRoot })
+              NoteUtils.getFullPath({
+                note,
+                wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
+              })
             )
           );
           done();
@@ -259,7 +272,10 @@ suite("GIVEN ReferenceProvider", function () {
           const links = await provideForNote(editor);
           expect(links!.map((l) => l.uri.fsPath)).toEqual(
             [noteWithLink].map((note) =>
-              NoteUtils.getFullPath({ note, wsRoot: getDWorkspace().wsRoot })
+              NoteUtils.getFullPath({
+                note,
+                wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
+              })
             )
           );
           done();

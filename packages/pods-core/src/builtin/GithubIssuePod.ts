@@ -20,6 +20,7 @@ import {
   DEngineClient,
   ERROR_SEVERITY,
   getSlugger,
+  asyncLoopOneAtATime,
 } from "@dendronhq/common-all";
 
 const ID = "dendron.githubissue";
@@ -253,40 +254,28 @@ export class GithubIssueImportPod extends ImportPod<GithubIssueImportPodConfig> 
   /**
    * method to get notes that are not already present in the vault
    */
-  getNewNotes(
-    notes: NoteProps[],
-    engine: DEngineClient,
-    wsRoot: string,
-    vault: DVault
-  ) {
-    return notes.filter((note) => {
-      const n = NoteUtils.getNoteByFnameV5({
-        fname: note.fname,
-        notes: engine.notes,
-        vault,
-        wsRoot,
-      });
-      return _.isUndefined(n);
-    });
+  async getNewNotes(notes: NoteProps[], engine: DEngineClient, vault: DVault) {
+    const engineNotes = await Promise.all(
+      notes.map(async (note) => {
+        return (await engine.findNotesMeta({ fname: note.fname, vault }))[0];
+      })
+    );
+    const engineSet = new Set(engineNotes);
+    return notes.filter((note) => !engineSet.has(note));
   }
 
   /**
    * method to update the notes whose status has changed
    */
-  getUpdatedNotes(
+  private async getUpdatedNotes(
     notes: NoteProps[],
     engine: DEngineClient,
-    wsRoot: string,
     vault: DVault
   ) {
     let updatedNotes: NoteProps[] = [];
-    notes.forEach(async (note) => {
-      const n = NoteUtils.getNoteByFnameV5({
-        fname: note.fname,
-        notes: engine.notes,
-        vault,
-        wsRoot,
-      });
+
+    asyncLoopOneAtATime(notes, async (note) => {
+      const n = (await engine.findNotes({ fname: note.fname, vault }))[0];
       if (
         !_.isUndefined(n) &&
         (n.custom.issueID === undefined ||
@@ -295,7 +284,7 @@ export class GithubIssueImportPod extends ImportPod<GithubIssueImportPodConfig> 
         n.custom.status = note.custom.status;
         n.custom.issueID = note.custom.issueID;
         updatedNotes = [...updatedNotes, n];
-        await engine.writeNote(n, { newNode: true });
+        await engine.writeNote(n);
       }
     });
     return updatedNotes;
@@ -357,10 +346,10 @@ export class GithubIssueImportPod extends ImportPod<GithubIssueImportPodConfig> 
       concatenate,
       fnameAsId,
     });
-    const newNotes = this.getNewNotes(notes, engine, wsRoot, vault);
-    const updatedNotes = this.getUpdatedNotes(notes, engine, wsRoot, vault);
+    const newNotes = await this.getNewNotes(notes, engine, vault);
+    const updatedNotes = await this.getUpdatedNotes(notes, engine, vault);
 
-    await engine.bulkAddNotes({ notes: newNotes });
+    await engine.bulkWriteNotes({ notes: newNotes, skipMetadata: true });
 
     return { importedNotes: [...newNotes, ...updatedNotes] };
   }
@@ -713,7 +702,7 @@ export class GithubIssuePublishPod extends PublishPod<GithubIssuePublishPodConfi
         note.custom.issueID = issue.id;
         note.custom.url = issue.url;
         note.custom.status = issue.state;
-        await engine.writeNote(note, { updateExisting: true });
+        await engine.writeNote(note);
         showMessage.info(GITHUBMESSAGE.ISSUE_CREATED);
         resp = issue.url;
       }
@@ -781,7 +770,7 @@ export class GithubIssuePublishPod extends PublishPod<GithubIssuePublishPodConfi
         note.custom.discussionID = discussion.id;
         note.custom.url = discussion.url;
         note.custom.author = discussion.author.url;
-        await engine.writeNote(note, { updateExisting: true });
+        await engine.writeNote(note);
         showMessage.info(GITHUBMESSAGE.DISCUSSION_CREATED);
         resp = discussion.url;
       }

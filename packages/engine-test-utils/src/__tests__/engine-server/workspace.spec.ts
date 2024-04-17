@@ -1,8 +1,13 @@
-import { ConfigUtils, DVault, NoteProps } from "@dendronhq/common-all";
-import { tmpDir } from "@dendronhq/common-server";
+import {
+  ConfigUtils,
+  CONSTANTS,
+  DVault,
+  FOLDERS,
+  NoteProps,
+} from "@dendronhq/common-all";
+import { DConfig, tmpDir } from "@dendronhq/common-server";
 import { NoteTestUtilsV4 } from "@dendronhq/common-test-utils";
 import {
-  DConfig,
   SeedService,
   SyncActionStatus,
   WorkspaceService,
@@ -19,6 +24,7 @@ import {
   GitTestUtils,
 } from "../../utils";
 import { TestSeedUtils } from "../../utils/seed";
+import sinon from "sinon";
 
 describe("WorkspaceUtils", () => {
   describe("findWSRoot", () => {
@@ -82,7 +88,10 @@ describe("WorkspaceService", () => {
     test("basic", async () => {
       const wsRoot = tmpDir().name;
       const vaults = [{ fsPath: "vault1" }];
-      await WorkspaceService.createWorkspace({ wsRoot, vaults });
+      await WorkspaceService.createWorkspace({
+        wsRoot,
+        additionalVaults: vaults,
+      });
       const gitignore = path.join(wsRoot, ".gitignore");
       expect(
         fs.readFileSync(gitignore, { encoding: "utf8" })
@@ -92,7 +101,10 @@ describe("WorkspaceService", () => {
     test("workspace Vault", async () => {
       const wsRoot = tmpDir().name;
       const vaults: DVault[] = [{ fsPath: "vault1", workspace: "foo" }];
-      await WorkspaceService.createWorkspace({ wsRoot, vaults });
+      await WorkspaceService.createWorkspace({
+        wsRoot,
+        additionalVaults: vaults,
+      });
       expect(fs.existsSync(path.join(wsRoot, "foo", "vault1"))).toBeTruthy();
     });
   });
@@ -143,7 +155,7 @@ describe("WorkspaceService", () => {
               snapshot: false,
             },
             // Necessary for windows test-compat:
-            path.join(`seeds`, `${id}`, `vault`).replace(/\\/g, "\\\\")
+            path.posix.join(`seeds`, `${id}`, `vault`)
           );
           await checkVaults(
             {
@@ -162,13 +174,94 @@ describe("WorkspaceService", () => {
       );
     });
 
+    test("remote self contained vaults present", async () => {
+      await runEngineTestV5(
+        async ({ wsRoot }) => {
+          // Create a self contained vault that we can add to this workspace
+          const tmp = tmpDir().name;
+          const vaultName = "test";
+          await WorkspaceService.createWorkspace({
+            wsRoot: tmp,
+            useSelfContainedVault: true,
+            wsVault: {
+              fsPath: ".",
+              name: vaultName,
+            },
+          });
+          const vaultFsPath = path.join(
+            FOLDERS.DEPENDENCIES,
+            "example.com",
+            "example",
+            vaultName
+          );
+          await GitTestUtils.addRepoToWorkspace(tmp);
+          // Add the created self contained vault into the workspace config without actually cloning the folder
+          const config = DConfig.readConfigSync(wsRoot);
+          config.workspace.vaults?.push({
+            fsPath: vaultFsPath,
+            name: vaultName,
+            remote: {
+              type: "git",
+              url: tmp,
+            },
+          });
+          await DConfig.writeConfig({ wsRoot, config });
+
+          // Run the workspace initialization, workspace service should discover the missing vault and clone it
+          const wsService = new WorkspaceService({ wsRoot });
+          const didClone = await wsService.initialize({
+            onSyncVaultsProgress: () => {},
+            onSyncVaultsEnd: () => {},
+          });
+          expect(didClone).toEqual(true);
+
+          // Cloned vault should have all the files we expect
+          const vaultClonedPath = path.join(wsRoot, vaultFsPath);
+          // vault should have been cloned
+          await checkDir(
+            { fpath: vaultClonedPath },
+            CONSTANTS.DENDRON_WS_NAME,
+            CONSTANTS.DENDRON_CONFIG_FILE,
+            FOLDERS.NOTES
+          );
+
+          // Notes go under `vault/notes/`, so they shouldn't exist in the root
+          await checkNotInDir(
+            {
+              fpath: vaultClonedPath,
+            },
+            "root.md"
+          );
+          // It should avoid the bug where the vault is cloned into `notes`, ending up with `vault/notes/notes`
+          await checkNotInDir(
+            {
+              fpath: path.join(vaultClonedPath, FOLDERS.NOTES),
+            },
+            FOLDERS.NOTES
+          );
+
+          // The notes should exist
+          await checkDir(
+            {
+              fpath: path.join(vaultClonedPath, FOLDERS.NOTES),
+            },
+            "root.md"
+          );
+        },
+        {
+          expect,
+        }
+      );
+    });
+
     testWithEngine(
       "remoteVaults present, no enableRemoteVaultInit",
-      async ({ wsRoot, engine }) => {
+      async ({ wsRoot }) => {
         const root = tmpDir().name;
         await GitTestUtils.createRepoWithReadme(root);
+        const config = DConfig.readConfigSync(wsRoot);
 
-        const vaultsConfig = ConfigUtils.getVaults(engine.config);
+        const vaultsConfig = ConfigUtils.getVaults(config);
 
         vaultsConfig.push({
           fsPath: "remoteVault",
@@ -177,13 +270,9 @@ describe("WorkspaceService", () => {
             url: root,
           },
         });
-        ConfigUtils.setVaults(engine.config, vaultsConfig);
-        ConfigUtils.setWorkspaceProp(
-          engine.config,
-          "enableRemoteVaultInit",
-          false
-        );
-        DConfig.writeConfig({ wsRoot, config: engine.config });
+        ConfigUtils.setVaults(config, vaultsConfig);
+        ConfigUtils.setWorkspaceProp(config, "enableRemoteVaultInit", false);
+        await DConfig.writeConfig({ wsRoot, config });
         const ws = new WorkspaceService({ wsRoot });
         const didClone = await ws.initialize({
           onSyncVaultsProgress: () => {},

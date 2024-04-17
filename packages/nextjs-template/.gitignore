@@ -37,11 +37,22 @@ data
 public/assets
 public/CNAME
 public/logo.*
+public/themes
 local
 
 # generated
-robots.txt
 sitemap.xml
 public/*.html
 dist
 .env.production
+custom/*
+!custom/NoOp.tsx
+builds
+test-results/
+
+# migrated from packages/dendron-cli/src/utils/build.ts
+public/robots.txt
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

@@ -2,10 +2,10 @@ import { DendronError, getStage, isTSError } from "@dendronhq/common-all";
 import { DLogger, getDurationMilliseconds } from "@dendronhq/common-server";
 import _ from "lodash";
 import { window } from "vscode";
-import { Logger } from "../logger";
-import { AnalyticsUtils } from "../utils/analytics";
 import { IDendronExtension } from "../dendronExtensionInterface";
+import { Logger } from "../logger";
 import { IBaseCommand } from "../types";
+import { AnalyticsUtils } from "../utils/analytics";
 
 export type CodeCommandConstructor = {
   new (extension: IDendronExtension): CodeCommandInstance;
@@ -57,6 +57,7 @@ export abstract class BaseCommand<
   static requireActiveWorkspace = false;
 
   abstract key: string;
+  skipAnalytics?: boolean;
 
   async gatherInputs(_opts?: TRunOpts): Promise<TGatherOutput | undefined> {
     return {} as any;
@@ -86,33 +87,34 @@ export abstract class BaseCommand<
     let opts: TOpts | undefined;
     let resp: TOut | undefined;
 
-    let sanityCheck: SanityCheckResults;
+    let sanityCheckResp: SanityCheckResults;
 
     try {
-      sanityCheck = await this.sanityCheck(args);
-      if (sanityCheck === "cancel") {
+      sanityCheckResp = await this.sanityCheck(args);
+      if (sanityCheckResp === "cancel") {
         this.L.info({ ctx, msg: "sanity check cancelled" });
         return;
       }
-      if (!_.isUndefined(sanityCheck) && sanityCheck !== "cancel") {
-        window.showErrorMessage(sanityCheck);
+      if (!_.isUndefined(sanityCheckResp) && sanityCheckResp !== "cancel") {
+        window.showErrorMessage(sanityCheckResp);
         return;
       }
 
       // @ts-ignore
       const inputs = await this.gatherInputs(args);
-      if (!_.isUndefined(inputs)) {
-        opts = await this.enrichInputs(inputs);
-        if (_.isUndefined(opts)) {
-          return;
-        }
-        this.L.info({ ctx, msg: "pre-execute" });
-        resp = await this.execute(this.mergeInputs(opts, args));
-        this.L.info({ ctx, msg: "post-execute" });
-        this.showResponse(resp);
-        return resp;
+      // if undefined, imply user cancel
+      if (_.isUndefined(inputs)) {
+        return;
       }
-      return;
+      opts = await this.enrichInputs(inputs);
+      if (_.isUndefined(opts)) {
+        return;
+      }
+      this.L.info({ ctx, msg: "pre-execute" });
+      resp = await this.execute(this.mergeInputs(opts, args));
+      this.L.info({ ctx, msg: "post-execute" });
+      this.showResponse(resp);
+      return resp;
     } catch (error: any) {
       let cerror: DendronError;
 
@@ -144,13 +146,16 @@ export abstract class BaseCommand<
       const payload = this.addAnalyticsPayload
         ? await this.addAnalyticsPayload(opts, resp)
         : {};
-      const sanityCheckResults = sanityCheck ? { sanityCheck } : {};
-      AnalyticsUtils.track(this.key, {
-        duration: getDurationMilliseconds(start),
-        error: isError,
-        ...payload,
-        ...sanityCheckResults,
-      });
+      const sanityCheckResults = sanityCheckResp
+        ? { sanityCheck: sanityCheckResp }
+        : {};
+      if (!this.skipAnalytics)
+        AnalyticsUtils.track(this.key, {
+          duration: getDurationMilliseconds(start),
+          error: isError,
+          ...payload,
+          ...sanityCheckResults,
+        });
     }
   }
 }

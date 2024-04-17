@@ -1,9 +1,4 @@
-import {
-  NoteProps,
-  NoteUtils,
-  ResponseUtil,
-  Time,
-} from "@dendronhq/common-all";
+import { ResponseUtil, Time } from "@dendronhq/common-all";
 import { tmpDir } from "@dendronhq/common-server";
 import { NOTE_PRESETS_V4 } from "@dendronhq/common-test-utils";
 import { EngineUtils, openPortFile } from "@dendronhq/engine-server";
@@ -316,6 +311,9 @@ describe("GIVEN an ExternalConnectionManager class", () => {
  * GoogleDocsExportPod
  */
 describe("GIVEN a Google Docs Export Pod with a particular config", () => {
+  // pod tests can take a long time to run
+  jest.setTimeout(60000);
+
   describe("WHEN exporting a note", () => {
     test("THEN expect gdoc to be created", async () => {
       await runEngineTestV5(
@@ -346,11 +344,12 @@ describe("GIVEN a Google Docs Export Pod with a particular config", () => {
             errors: [],
           };
           pod.createGdoc = jest.fn().mockResolvedValue(response);
-          const props = NoteUtils.getNoteByFnameFromEngine({
-            fname: "simple-wikilink",
-            vault: opts.vaults[0],
-            engine: opts.engine,
-          }) as NoteProps;
+          const props = (
+            await opts.engine.findNotes({
+              fname: "simple-wikilink",
+              vault: opts.vaults[0],
+            })
+          )[0];
 
           const result = await pod.exportNotes([props]);
           const entCreate = result.data?.created!;
@@ -409,11 +408,12 @@ describe("GIVEN a Google Docs Export Pod with a particular config", () => {
             ],
           };
           pod.createGdoc = jest.fn().mockResolvedValue(response);
-          const props = NoteUtils.getNoteByFnameFromEngine({
-            fname: "simple-wikilink",
-            vault: opts.vaults[0],
-            engine: opts.engine,
-          }) as NoteProps;
+          const props = (
+            await opts.engine.findNotes({
+              fname: "simple-wikilink",
+              vault: opts.vaults[0],
+            })
+          )[0];
 
           const result = await pod.exportNotes([props]);
           const entCreate = result.data?.created!;
@@ -456,11 +456,12 @@ describe("GIVEN a Notion Export Pod with a particular config", () => {
           const pod = new NotionExportPodV2({
             podConfig,
           });
-          const props = NoteUtils.getNoteByFnameFromEngine({
-            fname: "bar",
-            vault: opts.vaults[0],
-            engine: opts.engine,
-          }) as NoteProps;
+          const props = (
+            await opts.engine.findNotes({
+              fname: "bar",
+              vault: opts.vaults[0],
+            })
+          )[0];
           const response = {
             data: [
               {
@@ -502,11 +503,12 @@ describe("GIVEN a JSON Export Pod with a particular config", () => {
           const pod = new JSONExportPodV2({
             podConfig,
           });
-          const props = NoteUtils.getNoteByFnameFromEngine({
-            fname: "bar",
-            vault: opts.vaults[0],
-            engine: opts.engine,
-          }) as NoteProps;
+          const props = (
+            await opts.engine.findNotes({
+              fname: "bar",
+              vault: opts.vaults[0],
+            })
+          )[0];
           const result = await pod.exportNotes([props]);
           const data = result.data?.exportedNotes!;
           expect(_.isString(data)).toBeTruthy();
@@ -541,11 +543,12 @@ describe("GIVEN a JSON Export Pod with a particular config", () => {
               podConfig,
             });
 
-            const props = NoteUtils.getNoteByFnameFromEngine({
-              fname: "bar",
-              vault: opts.vaults[0],
-              engine: opts.engine,
-            }) as NoteProps;
+            const props = (
+              await opts.engine.findNotes({
+                fname: "bar",
+                vault: opts.vaults[0],
+              })
+            )[0];
 
             await pod.exportNotes([props]);
             const content = fs.readFileSync(path.join(exportDest), {

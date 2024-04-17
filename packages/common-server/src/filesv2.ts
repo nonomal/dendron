@@ -1,26 +1,27 @@
 import {
+  CONSTANTS,
   DendronError,
-  DNodeUtils,
   DVault,
+  ERROR_STATUS,
+  FOLDERS,
+  genHash,
   isNotUndefined,
   NoteProps,
-  NotesCache,
   NoteUtils,
   RespV3,
   SchemaModuleOpts,
   SchemaModuleProps,
   SchemaUtils,
+  string2Note,
   VaultUtils,
 } from "@dendronhq/common-all";
 import anymatch from "anymatch";
 import { assign, CommentJSONValue, parse, stringify } from "comment-json";
 import { FSWatcher } from "fs";
 import fs from "fs-extra";
-import matter from "gray-matter";
 import YAML, { JSON_SCHEMA } from "js-yaml";
 import _ from "lodash";
 import path from "path";
-import SparkMD5 from "spark-md5";
 // @ts-ignore
 import tmp, { DirResult, dirSync } from "tmp";
 import { resolvePath } from "./files";
@@ -68,7 +69,7 @@ export async function createFileWatcher(
   });
   const didCreate = false;
 
-  return new Promise(async (resolve, _reject) => {
+  return new Promise((resolve, _reject) => {
     if (!fs.existsSync(fpath)) {
       return setTimeout(() => {
         resolve(
@@ -123,10 +124,6 @@ export async function file2Schema(
   return SchemaParserV2.parseRaw(schemaOpts, { root, fname, wsRoot });
 }
 
-export function genHash(contents: any) {
-  return SparkMD5.hash(contents); // OR raw hash (binary string)
-}
-
 export async function string2Schema({
   vault,
   content,
@@ -146,94 +143,28 @@ export async function string2Schema({
   });
 }
 
-/**
- *
- * @param calculateHash - when set, add `contentHash` property to the note
- *  Default: false
- * @returns
- */
-export function string2Note({
-  content,
-  fname,
-  vault,
-  calculateHash,
-}: {
-  content: string;
-  fname: string;
-  vault: DVault;
-  calculateHash?: boolean;
-}) {
-  const options: any = {
-    engines: {
-      yaml: {
-        parse: (s: string) => YAML.load(s),
-        stringify: (s: string) => YAML.dump(s),
-      },
-    },
-  };
-  const { data, content: body } = matter(content, options);
-  if (data?.title) data.title = _.toString(data.title);
-  if (data?.id) data.id = _.toString(data.id);
-  const custom = DNodeUtils.getCustomProps(data);
-
-  const contentHash = calculateHash ? genHash(content) : undefined;
-  const note = DNodeUtils.create({
-    ...data,
-    custom,
-    fname,
-    body,
-    type: "note",
-    vault,
-    contentHash,
-  });
-  return note;
-}
-
+// TODO: consider throwing error if no frontmatter
 export function file2Note(
   fpath: string,
   vault: DVault,
   toLowercase?: boolean
-): NoteProps {
-  const content = fs.readFileSync(fpath, { encoding: "utf8" });
-  const { name } = path.parse(fpath);
-  const fname = toLowercase ? name.toLowerCase() : name;
-  return string2Note({ content, fname, vault });
-}
-
-export function file2NoteWithCache({
-  fpath,
-  vault,
-  cache,
-  toLowercase,
-}: {
-  fpath: string;
-  vault: DVault;
-  cache: NotesCache;
-  toLowercase?: boolean;
-}): { note: NoteProps; matchHash: boolean; noteHash: string } {
-  const content = fs.readFileSync(fpath, { encoding: "utf8" });
-  const { name } = path.parse(fpath);
-  const sig = genHash(content);
-  const matchHash = cache.notes[name]?.hash === sig;
-  const fname = toLowercase ? name.toLowerCase() : name;
-  let note: NoteProps;
-
-  // if hash matches, note hasn't changed
-  if (matchHash) {
-    // since we don't store the note body in the cache file, we need to re-parse the body
-    const capture = content.match(/^---[\s\S]+?---/);
-    if (capture) {
-      const offset = capture[0].length;
-      const body = content.slice(offset + 1);
-      // vault can change without note changing so we need to add this
-      // add `contentHash` to this signature because its not saved with note
-      note = { ...cache.notes[name].data, body, vault, contentHash: sig };
-      return { note, matchHash, noteHash: sig };
-    }
+): RespV3<NoteProps> {
+  if (!fs.existsSync(fpath)) {
+    const error = DendronError.createFromStatus({
+      status: ERROR_STATUS.INVALID_STATE,
+      message: `${fpath} does not exist`,
+    });
+    return {
+      error,
+    };
+  } else {
+    const content = fs.readFileSync(fpath, { encoding: "utf8" });
+    const { name } = path.parse(fpath);
+    const fname = toLowercase ? name.toLowerCase() : name;
+    return {
+      data: string2Note({ content, fname, vault }),
+    };
   }
-  note = string2Note({ content, fname, vault });
-  note.contentHash = sig;
-  return { note, matchHash, noteHash: sig };
 }
 
 /** Read the contents of a note from the filesystem.
@@ -377,7 +308,10 @@ export function uniqueOutermostFolders(folders: string[]) {
   );
 }
 
-export function note2File({
+/**
+ * Return hash of written file
+ */
+export async function note2File({
   note,
   vault,
   wsRoot,
@@ -388,25 +322,10 @@ export function note2File({
 }) {
   const { fname } = note;
   const ext = ".md";
-  const payload = NoteUtils.serialize(note);
+  const payload = NoteUtils.serialize(note, { excludeStub: true });
   const vpath = vault2Path({ vault, wsRoot });
-  return fs.writeFile(path.join(vpath, fname + ext), payload);
-}
-
-function serializeModuleProps(moduleProps: SchemaModuleProps) {
-  const { version, imports, schemas } = moduleProps;
-  // TODO: filter out imported schemas
-  const out: any = {
-    version,
-    imports: [],
-    schemas: _.values(schemas).map((ent) =>
-      SchemaUtils.serializeSchemaProps(ent)
-    ),
-  };
-  if (imports) {
-    out.imports = imports;
-  }
-  return YAML.dump(out, { schema: JSON_SCHEMA });
+  await fs.writeFile(path.join(vpath, fname + ext), payload);
+  return genHash(payload);
 }
 
 function serializeModuleOpts(moduleOpts: SchemaModuleOpts) {
@@ -443,7 +362,7 @@ export function schemaModuleProps2File(
   const ext = ".schema.yml";
   return fs.writeFile(
     path.join(vpath, fname + ext),
-    serializeModuleProps(schemaMProps)
+    SchemaUtils.serializeModuleProps(schemaMProps)
   );
 }
 
@@ -475,6 +394,13 @@ export function tmpDir(): DirResult {
   return dirPath;
 }
 
+/** Returns the path to where the notes are stored inside the vault.
+ *
+ * For self contained vaults, this is the `notes` folder inside of the vault.
+ * For other vault types, this is the root of the vault itself.
+ *
+ * If you always need the root of the vault, use {@link pathForVaultRoot} instead.
+ */
 export const vault2Path = ({
   vault,
   wsRoot,
@@ -484,6 +410,24 @@ export const vault2Path = ({
 }) => {
   return resolvePath(VaultUtils.getRelPath(vault), wsRoot);
 };
+
+/** Returns the root of the vault.
+ *
+ * This is similar to {@link vault2Path}, the only difference is that for self
+ * contained vaults `vault2Path` returns the `notes` folder inside the vault,
+ * while this returns the root of the vault.
+ */
+export function pathForVaultRoot({
+  vault,
+  wsRoot,
+}: {
+  vault: DVault;
+  wsRoot: string;
+}) {
+  if (VaultUtils.isSelfContained(vault))
+    return resolvePath(path.join(wsRoot, vault.fsPath));
+  return vault2Path({ vault, wsRoot });
+}
 
 export function writeJSONWithCommentsSync(fpath: string, data: any) {
   const payload = stringify(data, null, 4);
@@ -637,7 +581,35 @@ class FileUtils {
   };
 }
 
-export class ExtensionUtils {
+/** Looks at the files at the given path to check if it's a self contained vault. */
+export async function isSelfContainedVaultFolder(dir: string) {
+  return _.every(
+    await Promise.all([
+      fs.pathExists(path.join(dir, CONSTANTS.DENDRON_CONFIG_FILE)),
+      fs.pathExists(path.join(dir, FOLDERS.NOTES)),
+    ])
+  );
+}
+
+/** Move a file or folder from `from` to `to`, if the file exists.
+ *
+ * @returns True if the file did exist and was moved successfully, false otherwise.
+ */
+export async function moveIfExists(from: string, to: string): Promise<boolean> {
+  try {
+    if (await fs.pathExists(from)) {
+      await fs.move(from, to);
+      return true;
+    }
+  } catch (err) {
+    // Permissions error or similar issue when moving the path
+    // deliberately left empty
+  }
+  return false;
+}
+
+/** Utility functions for dealing with file extensions. */
+export class FileExtensionUtils {
   private static textExtensions: ReadonlySet<string>;
   private static ensureTextExtensions() {
     if (this.textExtensions === undefined) {

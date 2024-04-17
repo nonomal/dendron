@@ -6,8 +6,9 @@ import {
   DNoteAnchorBasic,
   DVault,
   NoteProps,
-  NoteUtils,
+  NotePropsMeta,
   RespV3,
+  SchemaModuleProps,
   VaultUtils,
 } from "@dendronhq/common-all";
 import _ from "lodash";
@@ -16,7 +17,8 @@ import { Logger } from "./logger";
 import { VSCodeUtils } from "./vsCodeUtils";
 import { ExtensionProvider } from "./ExtensionProvider";
 import { isInsidePath, vault2Path } from "@dendronhq/common-server";
-import { AnchorUtils, WorkspaceUtils } from "@dendronhq/engine-server";
+import { WorkspaceUtils } from "@dendronhq/engine-server";
+import { AnchorUtils } from "@dendronhq/unified";
 
 let WS_UTILS: IWSUtilsV2 | undefined;
 
@@ -40,8 +42,8 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     });
   }
 
-  getNoteFromPath(fsPath: string): NoteProps | undefined {
-    const { engine, wsRoot } = this.extension.getDWorkspace();
+  async getNoteFromPath(fsPath: string): Promise<NoteProps | undefined> {
+    const { engine } = this.extension.getDWorkspace();
     const fname = path.basename(fsPath, ".md");
     let vault: DVault;
     try {
@@ -50,12 +52,7 @@ export class WSUtilsV2 implements IWSUtilsV2 {
       // No vault
       return undefined;
     }
-    return NoteUtils.getNoteByFnameV5({
-      fname,
-      vault,
-      wsRoot,
-      notes: engine.notes,
-    });
+    return (await engine.findNotes({ fname, vault }))[0];
   }
 
   /**
@@ -82,8 +79,8 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     return vault;
   }
 
-  getNoteFromDocument(document: vscode.TextDocument) {
-    const { engine, wsRoot } = this.extension.getDWorkspace();
+  async getNoteFromDocument(document: vscode.TextDocument) {
+    const { engine } = this.extension.getDWorkspace();
     const txtPath = document.uri.fsPath;
     const fname = path.basename(txtPath, ".md");
     let vault: DVault;
@@ -93,35 +90,23 @@ export class WSUtilsV2 implements IWSUtilsV2 {
       // No vault
       return undefined;
     }
-    return NoteUtils.getNoteByFnameV5({
-      fname,
-      vault,
-      wsRoot,
-      notes: engine.notes,
-    });
+    return (await engine.findNotes({ fname, vault }))[0];
   }
 
   /**
-   * See {@link IWSUtilsV2.findNoteFromMultiVaultAsync}.
+   * See {@link IWSUtilsV2.promptForNoteAsync}.
    */
-  async findNoteFromMultiVaultAsync(opts: {
-    fname: string;
+  async promptForNoteAsync(opts: {
+    notes: NoteProps[];
     quickpickTitle: string;
     nonStubOnly?: boolean;
-    vault?: DVault;
   }): Promise<RespV3<NoteProps | undefined>> {
-    const { fname, quickpickTitle, nonStubOnly = false, vault } = opts;
+    const { notes, quickpickTitle, nonStubOnly = false } = opts;
     let existingNote: NoteProps | undefined;
-    const engine = ExtensionProvider.getEngine();
-    const maybeNotes = NoteUtils.getNotesByFnameFromEngine({
-      fname,
-      engine,
-      vault,
-    });
 
     const filteredNotes = nonStubOnly
-      ? maybeNotes.filter((note) => !note.stub)
-      : maybeNotes;
+      ? notes.filter((note) => !note.stub)
+      : notes;
 
     if (filteredNotes.length === 1) {
       // Only one match so use that as note
@@ -131,7 +116,9 @@ export class WSUtilsV2 implements IWSUtilsV2 {
       const vaults = filteredNotes.map((noteProps) => {
         return {
           vault: noteProps.vault,
-          label: `${fname} from ${VaultUtils.getName(noteProps.vault)}`,
+          label: `${noteProps.fname} from ${VaultUtils.getName(
+            noteProps.vault
+          )}`,
         };
       });
 
@@ -156,7 +143,7 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     } else {
       return {
         error: new DendronError({
-          message: `No note found for ${fname}`,
+          message: `No note found`,
         }),
       };
     }
@@ -176,7 +163,9 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     return vault;
   }
 
-  tryGetNoteFromDocument(document: vscode.TextDocument): NoteProps | undefined {
+  async tryGetNoteFromDocument(
+    document: vscode.TextDocument
+  ): Promise<NoteProps | undefined> {
     const { wsRoot, vaults } = this.extension.getDWorkspace();
     if (
       !WorkspaceUtils.isPathInWorkspace({
@@ -192,7 +181,7 @@ export class WSUtilsV2 implements IWSUtilsV2 {
       return;
     }
     try {
-      const note = this.getNoteFromDocument(document);
+      const note = await this.getNoteFromDocument(document);
       return note;
     } catch (err) {
       Logger.info({
@@ -230,7 +219,7 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     }
   }
 
-  getActiveNote() {
+  async getActiveNote() {
     const editor = VSCodeUtils.getActiveTextEditor();
     if (editor) return this.getNoteFromDocument(editor.document);
     return;
@@ -265,9 +254,15 @@ export class WSUtilsV2 implements IWSUtilsV2 {
     return editor as vscode.TextEditor;
   }
 
-  async openNote(note: NoteProps) {
+  async openNote(note: NotePropsMeta) {
     const { vault, fname } = note;
     const fnameWithExtension = `${fname}.md`;
+    return this.openFileInEditorUsingFullFname(vault, fnameWithExtension);
+  }
+
+  async openSchema(schema: SchemaModuleProps) {
+    const { vault, fname } = schema;
+    const fnameWithExtension = `${fname}.schema.yml`;
     return this.openFileInEditorUsingFullFname(vault, fnameWithExtension);
   }
 }

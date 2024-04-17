@@ -13,8 +13,6 @@ export enum VSCodeEvents {
   SchemaLookup_Update = "SchemaLookup_Update",
   NoteLookup_Accept = "NoteLookup_Accept",
   SchemaLookup_Accept = "SchemaLookup_Accept",
-  /** @deprecated: treeview v2 is deprecated. */
-  TreeView_Ready = "TreeView_Ready",
   Upgrade = "Upgrade",
   UpgradeSeeWhatsChangedClicked = "UpgradeSeeWhatsChangedClicked",
   UpgradeViewClosed = "UpgradeViewClosed",
@@ -28,6 +26,11 @@ export enum VSCodeEvents {
   ShowInactiveUserMessage = "Show_Inactive_User_Message",
   FeatureShowcaseDisplayed = "FeatureShowcasedDisplayed",
   FeatureShowcaseResponded = "FeatureShowcaseResponded",
+  HelpAndFeedbackItemClicked = "HelpAndFeedbackItemClicked",
+  BacklinksPanelUsed = "BacklinksPanelUsed",
+  RecentWorkspacesPanelUsed = "RecentWorkspacesPanelUsed",
+  V100ReleaseNotesShown = "V100ReleaseNotesShown",
+  NoteTraitsInitialized = "NoteTraitsInitialized",
 }
 
 export enum CLIEvents {
@@ -41,13 +44,22 @@ export enum CLIEvents {
 export enum TutorialEvents {
   WelcomeShow = "WelcomeShow",
   ClickStart = "Getting_Started_Clicked",
-  Tutorial_0_Show = "Tutorial_0_Show",
-  Tutorial_1_Show = "Tutorial_1_Show",
-  Tutorial_2_Show = "Tutorial_2_Show",
-  Tutorial_3_Show = "Tutorial_3_Show",
-  Tutorial_4_Show = "Tutorial_4_Show",
-  Tutorial_5_Show = "Tutorial_5_Show",
+  TutorialNoteViewed = "TutorialNoteViewed",
+  TutorialPreviewLinkClicked = "TutorialPreviewLinkClicked",
+  TutorialWorkspaceLaunching = "TutorialWorkspaceLaunching",
 }
+
+export type TutorialPreviewLinkClickedPayload = {
+  linkType: "WIKI" | "ASSET" | "WEBSITE" | "TEXT" | "COMMAND" | "UNKNOWN";
+  href: string;
+};
+
+export type TutorialNoteViewedPayload = {
+  tutorialType: string;
+  fname: string;
+  currentStep: number;
+  totalSteps: number;
+};
 
 export enum KeybindingConflictDetectedSource {
   activation = "activation",
@@ -59,6 +71,16 @@ export enum ConfirmStatus {
   rejected = "rejected",
 }
 
+export type RefactoringCommandUsedPayload = {
+  command: string;
+  numVaults: number;
+  traits: string[];
+  numChildren: number;
+  numLinks: number;
+  numChars: number;
+  noteDepth: number;
+};
+
 export enum ExtensionEvents {
   VimExtensionInstalled = "Vim_Extension_Installed",
   IncompatibleExtensionsWarned = "Incompatible_Extensions_Warned",
@@ -66,6 +88,11 @@ export enum ExtensionEvents {
   KeybindingConflictDetected = "Keybinding_Conflict_Detected",
   ShowKeybindingConflictAccepted = "Show_Keybinding_Conflict_Accepted",
   ShowKeybindingConflictRejected = "Show_Keybinding_Conflict_Rejected",
+  DeprecationNoticeShow = "DeprecationNoticeShow",
+  DeprecationNoticeAccept = "DeprecationNoticeAccept",
+  LocalhostBlockedNotified = "LocalhostBlocked_Notified",
+  LocalhostBlockedAccepted = "LocalhostBlocked_Accepted",
+  LocalhostBlockedRejected = "LocalhostBlocked_Rejected",
 }
 
 export enum LookupEvents {
@@ -107,18 +134,30 @@ export enum SurveyEvents {
 
 export enum GitEvents {
   ContributorsFound = "ContributorsFound",
+  TopLevelRepoFound = "TopLevelRepoFound",
 }
 
 export enum ConfigEvents {
   ConfigNotMigrated = "Config_Not_Migrated",
   EnabledExportPodV2 = "Enabled_Export_Pod_V2",
   ShowMissingDefaultConfigMessage = "Show_Missing_Default_Config_Message",
+  DeprecatedConfigMessageConfirm = "DeprecatedConfigMessageConfirm",
+  DeprecatedConfigMessageShow = "ShowDeprecatedConfigMessage",
   MissingDefaultConfigMessageConfirm = "MissingDefaultConfigMessageConfirm",
+  DuplicateConfigEntryMessageShow = "DuplicateConfigEntryMessageShow",
+  DuplicateConfigEntryMessageConfirm = "DuplicateConfigEntryMessageConfirm",
+  MissingSelfContainedVaultsMessageShow = "MissingSelfContainedVaultsMessageShow",
+  MissingSelfContainedVaultsMessageAccept = "MissingSelfContainedVaultsMessageAccept",
+  OutdatedSeedVaultMessageShow = "OutdatedSeedVaultMessageShow",
+  OutdatedSeedVaultMessageAccept = "OutdatedSeedVaultMessageAccept",
+  ConfigChangeDetected = "ConfigChangeDetected",
 }
 
 export enum MigrationEvents {
   MigrationSucceeded = "Migration_Succeeded",
   MigrationFailed = "Migration_Failed",
+  ManualUpgradeMessageShow = "ManualUpgradeMessageShow",
+  ManualUpgradeMessageConfirm = "ManualUpgradeMessageConfirm",
 }
 
 export enum ContextualUIEvents {
@@ -130,6 +169,9 @@ export enum ContextualUIEvents {
 
 export enum WorkspaceEvents {
   AutoFix = "AutoFix",
+  DuplicateNoteFound = "DuplicateNoteFound",
+  TransitiveDepsWarningShow = "TransitiveDepsWarningShow",
+  MultipleTelemetryIdsDetected = "MultipleTelemetryIdsDetected",
 }
 
 export enum NativeWorkspaceEvents {
@@ -138,13 +180,34 @@ export enum NativeWorkspaceEvents {
 
 export enum EngagementEvents {
   NoteViewed = "NoteViewed",
+  NoteScrolled = "NoteScrolled",
   EngineStateChanged = "EngineStateChanged",
+  AdditionalNoteFromMeetingNoteCreated = "AdditionalNoteFromMeetingNoteCreated",
+  TemplateApplied = "TemplateApplied",
+  RefactoringCommandUsed = "RefactoringCommandUsed",
+}
+
+export enum NoteScrolledSource {
+  EDITOR = "EDITOR",
+  PREVIEW = "PREVIEW",
 }
 
 export enum AppNames {
   CODE = "vscode",
   CLI = "cli",
   EXPRESS_SERVER = "express",
+  CODE_WEB = "vscode-web",
+}
+
+export enum GraphEvents {
+  GraphThemeChanged = "GraphThemeChanged",
+  GraphViewUsed = "GraphViewUsed",
+  GraphPanelUsed = "GraphPanelUsed",
+}
+
+export enum TreeViewEvents {
+  NoteOmittedErrorMessageShow = "NoteOmittedErrorMessageShow",
+  NoteOmittedErrorMessageConfirm = "NoteOmittedErrorMessageConfirm",
 }
 
 export const DendronEvents = {
@@ -159,4 +222,75 @@ export const DendronEvents = {
   NativeWorkspaceEvents,
   WorkspaceEvents,
   EngagementEvents,
+  GraphEvents,
+  TreeViewEvents,
 };
+
+/**
+ * User Profile.
+ */
+type UserProfileProps = {
+  /**
+   * The number of notes in the workspace
+   */
+  numNotes?: number;
+  /**
+   * The current A/B test groups the user is participating in
+   */
+  splitTests?: string[];
+  /**
+   * The role of user. Retrieved from initial survey.
+   */
+  role?: string;
+  /**
+   * The use case of Dendron for the user. Retrieved from initial survey.
+   */
+  useCases?: string[];
+  /**
+   * The context Dendron is used for the user. Retrieved from initial survey.
+   */
+  useContext?: string;
+  /**
+   * Whether the user has intent for publishing. If so, how. Retrieved from initial survey.
+   */
+  publishingUseCase?: string;
+  /**
+   * Prior tools the user has used before Dendron. Retrieved from initial survey.
+   */
+  priorTools?: string[];
+  /**
+   * Email of user. Retrieved from initial survey.
+   */
+  email?: string;
+
+  /**
+   * Did the user express interest in using Dendron for a team?
+   */
+  teamIntent?: boolean;
+};
+
+// platform props
+export type VSCodeProps = {
+  type: AppNames.CODE;
+  ideVersion: string;
+  ideFlavor: string;
+} & UserProfileProps;
+
+// platform identify props
+export type VSCodeIdentifyProps = {
+  appVersion: string;
+  appHost: string;
+  userAgent: string;
+  isNewAppInstall: boolean;
+  isTelemetryEnabled: boolean;
+  language: string;
+  machineId: string;
+  shell: string;
+} & VSCodeProps;
+
+export type CLIProps = {
+  type: AppNames.CLI;
+  cliVersion: string;
+} & UserProfileProps;
+
+export type CLIIdentifyProps = CLIProps;

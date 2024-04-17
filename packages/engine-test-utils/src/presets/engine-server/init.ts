@@ -1,11 +1,4 @@
-import {
-  ConfigUtils,
-  ERROR_SEVERITY,
-  ERROR_STATUS,
-  NoteProps,
-  NoteUtils,
-  Position,
-} from "@dendronhq/common-all";
+import { ConfigUtils, Position } from "@dendronhq/common-all";
 import { vault2Path } from "@dendronhq/common-server";
 import {
   FileTestUtils,
@@ -24,8 +17,9 @@ import { ENGINE_HOOKS, setupBasic } from "./utils";
 const SCHEMAS = {
   BASICS: new TestPresetEntryV4(
     async ({ engine }) => {
-      const fname = SCHEMA_PRESETS_V4.SCHEMA_SIMPLE.fname;
-      const schema = engine.schemas[fname];
+      const schema = (
+        await engine.getSchema(SCHEMA_PRESETS_V4.SCHEMA_SIMPLE.fname)
+      ).data!;
       return [
         {
           actual: _.size(schema.schemas),
@@ -38,16 +32,12 @@ const SCHEMAS = {
     }
   ),
   BAD_SCHEMA: new TestPresetEntryV4(
-    async ({ engine, initResp }) => {
-      const schemas = _.keys(engine.schemas);
+    async ({ initResp }) => {
       return [
-        // Should have caught the bad schema
         {
-          actual: schemas.sort(),
-          expected: ["foo", "root"],
-          msg: "bad schema not included",
+          actual: initResp.error?.message.includes("no_root_schema_found"),
+          expected: true,
         },
-        { actual: initResp.error?.severity, expected: ERROR_SEVERITY.MINOR },
         // Should have still finished initializing
         { actual: _.size(initResp.data?.notes), expected: 6 },
       ];
@@ -157,12 +147,15 @@ const NOTES = {
     async ({ engine }) => {
       return [
         {
-          actual: _.omit(engine.notes["one"], ["body", "parent"]),
+          actual: _.omit((await engine.getNote("one")).data!, [
+            "body",
+            "parent",
+          ]),
           expected: {
             children: [],
             created: 1,
             custom: {},
-            contentHash: "bfe07d1374685b973379679f442a165c",
+            contentHash: "fafa54dbe21ed7cfe96caa7fe0522f23",
             data: {},
             desc: "",
             fname: "one",
@@ -179,12 +172,15 @@ const NOTES = {
           },
         },
         {
-          actual: _.omit(engine.notes["three"], ["body", "parent"]),
+          actual: _.omit((await engine.getNote("three")).data!, [
+            "body",
+            "parent",
+          ]),
           expected: {
             children: [],
             created: 1,
             custom: {},
-            contentHash: "e68fa106a0a73e579c44c25f362f1ae3",
+            contentHash: "37112a67a651b32fcffbd3fdebc4e470",
             data: {},
             desc: "",
             fname: "three",
@@ -219,10 +215,51 @@ const NOTES = {
       },
     }
   ),
+  FIND: new TestPresetEntryV4(
+    async ({ engine, vaults }) => {
+      const fooNote = (
+        await engine.findNotes({
+          fname: "foo",
+        })
+      )[0];
+      const rootNotes = await engine.findNotesMeta({ fname: "root" });
+      const rootNote = (
+        await engine.findNotesMeta({
+          fname: "root",
+          vault: vaults[0],
+        })
+      )[0];
+      return [
+        {
+          actual: fooNote.fname,
+          expected: "foo",
+        },
+        {
+          actual: fooNote.body,
+          expected: "foo body",
+        },
+        {
+          actual: rootNotes.length,
+          expected: 3,
+        },
+        {
+          actual: rootNote.fname,
+          expected: "root",
+        },
+        {
+          actual: rootNote.vault.fsPath,
+          expected: vaults[0].fsPath,
+        },
+      ];
+    },
+    {
+      preSetupHook: ENGINE_HOOKS.setupBasic,
+    }
+  ),
   NOTE_TOO_LONG: new TestPresetEntryV4(
     async ({ engine }) => {
-      const one = engine.notes["one"];
-      const two = engine.notes["two"];
+      const one = (await engine.getNoteMeta("one")).data!;
+      const two = (await engine.getNoteMeta("two")).data!;
       return [
         // Links in one didn't get parsed since it's too long, but two did
         { actual: one.links.length, expected: 1 },
@@ -255,8 +292,8 @@ const NOTES = {
   ),
   NOTE_TOO_LONG_CONFIG: new TestPresetEntryV4(
     async ({ engine }) => {
-      const one = engine.notes["one"];
-      const two = engine.notes["two"];
+      const one = (await engine.getNoteMeta("one")).data!;
+      const two = (await engine.getNoteMeta("two")).data!;
       return [
         // Links in one didn't get parsed since it's too long, but two did
         { actual: one.links.length, expected: 1 },
@@ -295,13 +332,26 @@ const NOTES = {
     }
   ),
   MIXED_CASE_PARENT: new TestPresetEntryV4(
-    async ({ engine }) => {
-      const notes = engine.notes;
+    async ({ engine, vaults }) => {
+      const notesV1 = await engine.findNotesMeta({ vault: vaults[0] });
+      const notesV2 = await engine.findNotesMeta({ vault: vaults[1] });
+      const notesV3 = await engine.findNotesMeta({ vault: vaults[2] });
+
       return [
         {
-          actual: _.size(notes),
-          // 3 root, 1 foo, 1 foo.one, 1 foo.two
-          expected: 6,
+          actual: notesV1.length,
+          // 1 root, 1 foo, 1 foo.one, 1 foo.two
+          expected: 4,
+        },
+        {
+          actual: notesV2.length,
+          // 1 root
+          expected: 1,
+        },
+        {
+          actual: notesV3.length,
+          // 1 root
+          expected: 1,
         },
       ];
     },
@@ -323,18 +373,18 @@ const NOTES = {
   ),
   LINKS: new TestPresetEntryV4(
     async ({ engine, vaults }) => {
-      const noteAlpha = NoteUtils.getNoteByFnameV5({
-        fname: "alpha",
-        notes: engine.notes,
-        vault: vaults[0],
-        wsRoot: engine.wsRoot,
-      }) as NoteProps;
+      const noteAlpha = (
+        await engine.findNotesMeta({
+          fname: "alpha",
+          vault: vaults[0],
+        })
+      )[0];
       return [
         {
           actual: noteAlpha.links,
           expected: [
             {
-              alias: "beta",
+              alias: undefined,
               from: {
                 fname: "alpha",
                 id: "alpha",
@@ -364,9 +414,10 @@ const NOTES = {
               xvault: false,
             },
             {
-              alias: "alpha",
+              alias: undefined,
               from: {
                 fname: "beta",
+                id: "beta",
                 vaultName: "vault1",
               },
               position: {
@@ -397,19 +448,19 @@ const NOTES = {
   ),
   DOMAIN_STUB: new TestPresetEntryV4(
     async ({ wsRoot, vaults, engine }) => {
-      const noteRoot = NoteUtils.getNoteByFnameV5({
-        fname: "root",
-        notes: engine.notes,
-        vault: vaults[0],
-        wsRoot: engine.wsRoot,
-      }) as NoteProps;
+      const noteRoot = (
+        await engine.findNotesMeta({
+          fname: "root",
+          vault: vaults[0],
+        })
+      )[0];
 
-      const noteChild = NoteUtils.getNoteByFnameV5({
-        wsRoot: engine.wsRoot,
-        fname: "foo",
-        notes: engine.notes,
-        vault: vaults[0],
-      }) as NoteProps;
+      const noteChild = (
+        await engine.findNotesMeta({
+          fname: "foo",
+          vault: vaults[0],
+        })
+      )[0];
       const checkVault = await FileTestUtils.assertInVault({
         wsRoot,
         vault: vaults[0],
@@ -438,12 +489,12 @@ const NOTES = {
   ),
   NOTE_WITH_CUSTOM_ATT: new TestPresetEntryV4(
     async ({ vaults, engine }) => {
-      const noteRoot = NoteUtils.getNoteByFnameV5({
-        fname: "foo",
-        notes: engine.notes,
-        vault: vaults[0],
-        wsRoot: engine.wsRoot,
-      }) as NoteProps;
+      const noteRoot = (
+        await engine.findNotesMeta({
+          fname: "foo",
+          vault: vaults[0],
+        })
+      )[0];
 
       return [
         {
@@ -470,8 +521,11 @@ const NOTES = {
       return [
         // should have caught the broken note
         {
-          actual: initResp.error?.status,
-          expected: ERROR_STATUS.BAD_PARSE_FOR_NOTE,
+          actual: _.includes(
+            initResp.error?.message,
+            "foo.md could not be parsed"
+          ),
+          expected: true,
         },
         // should have still parsed remaining notes
         {

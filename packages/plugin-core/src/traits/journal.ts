@@ -1,6 +1,7 @@
 import {
   ConfigUtils,
-  IntermediateDendronConfig,
+  DendronConfig,
+  LookupNoteTypeEnum,
   NoteTrait,
   NoteUtils,
   OnCreateContext,
@@ -13,9 +14,9 @@ export class JournalNote implements NoteTrait {
   id: string = "journalNote";
   getTemplateType: any;
 
-  _config: IntermediateDendronConfig;
+  _config: DendronConfig;
 
-  constructor(config: IntermediateDendronConfig) {
+  constructor(config: DendronConfig) {
     this._config = config;
   }
 
@@ -27,7 +28,7 @@ export class JournalNote implements NoteTrait {
         const journalConfig = ConfigUtils.getJournal(config);
         const dailyJournalDomain = journalConfig.dailyDomain;
         const { noteName: fname } = DendronClientUtilsV2.genNoteName(
-          "JOURNAL",
+          LookupNoteTypeEnum.journal,
           {
             overrides: { domain: dailyJournalDomain },
           }

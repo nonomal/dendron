@@ -1,5 +1,5 @@
 import {
-  IntermediateDendronConfig,
+  DendronConfig,
   DendronError,
   DEngineClient,
   DVault,
@@ -9,11 +9,11 @@ import {
 import {
   createFileWatcher,
   createLogger,
+  DConfig,
   DLogger,
 } from "@dendronhq/common-server";
 import fs, { FSWatcher } from "fs-extra";
 import _ from "lodash";
-import { DConfig } from "../config";
 import { DendronEngineClient } from "../engineClient";
 import {
   EngineUtils,
@@ -56,7 +56,7 @@ export class EngineConnector {
   public onReady?: ({ ws }: { ws: EngineConnector }) => Promise<void>;
   public serverPortWatcher?: FSWatcher;
   public initialized: boolean;
-  public config: IntermediateDendronConfig;
+  public config: DendronConfig;
   public logger: DLogger;
 
   static _ENGINE_CONNECTOR: EngineConnector | undefined;
@@ -154,7 +154,7 @@ export class EngineConnector {
       logger: this.logger,
     });
     const resp = await dendronEngine.info();
-    if (!_.isUndefined(resp.error)) {
+    if (resp.error) {
       this.logger.info({ ctx, msg: "can't connect", error: resp.error });
       return false;
     } else {

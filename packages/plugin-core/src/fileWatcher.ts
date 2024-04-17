@@ -1,15 +1,17 @@
 import {
   ContextualUIEvents,
   DVault,
+  ErrorUtils,
   NoteProps,
   NoteUtils,
   VaultUtils,
   WorkspaceOpts,
   WorkspaceType,
 } from "@dendronhq/common-all";
-import { file2Note } from "@dendronhq/common-server";
+import { DConfig, file2Note } from "@dendronhq/common-server";
 import {
   EngineFileWatcher,
+  EngineUtils,
   FileWatcherAdapter,
   HistoryService,
 } from "@dendronhq/engine-server";
@@ -92,7 +94,7 @@ export class FileWatcher {
     // check if ignore
     const recentEvents = HistoryService.instance().lookBack();
     this.L.debug({ ctx, recentEvents, fname });
-    let note: NoteProps | undefined;
+    let note: NoteProps;
     if (
       _.find(recentEvents, (event) => {
         return _.every([
@@ -108,21 +110,20 @@ export class FileWatcher {
 
     try {
       this.L.debug({ ctx, fsPath, msg: "pre-add-to-engine" });
-      const { vaults, engine } = ExtensionProvider.getDWorkspace();
-      const { wsRoot } = ExtensionProvider.getDWorkspace();
+      const { vaults, engine, wsRoot } = ExtensionProvider.getDWorkspace();
       const vault = VaultUtils.getVaultByFilePath({
         vaults,
         fsPath,
         wsRoot,
       });
-      note = file2Note(fsPath, vault);
+      const resp = file2Note(fsPath, vault);
+      if (ErrorUtils.isErrorResp(resp)) {
+        throw resp.error;
+      }
+      note = resp.data;
 
       // check if note exist as
-      const maybeNote = NoteUtils.getNoteByFnameFromEngine({
-        fname,
-        vault,
-        engine,
-      });
+      const maybeNote = (await engine.findNotesMeta({ fname, vault }))[0];
       if (maybeNote) {
         note = NoteUtils.hydrate({ noteRaw: note, noteHydrated: maybeNote });
         delete note["stub"];
@@ -130,14 +131,13 @@ export class FileWatcher {
         //TODO recognise vscode's create new file menu option to create a note.
       }
 
-      note = await NoteUtils.updateNoteMetadata({
+      await EngineUtils.refreshNoteLinksAndAnchors({
         note,
         fmChangeOnly: false,
         engine,
+        config: DConfig.readConfigSync(engine.wsRoot),
       });
-      await engine.updateNote(note as NoteProps, {
-        newNode: true,
-      });
+      await engine.writeNote(note, { metaOnly: true });
     } catch (err: any) {
       this.L.error({ ctx, error: err });
       throw err;
@@ -172,9 +172,14 @@ export class FileWatcher {
       return;
     }
     try {
-      const engine = ExtensionProvider.getEngine();
+      const { vaults, engine, wsRoot } = ExtensionProvider.getDWorkspace();
+      const vault = VaultUtils.getVaultByFilePath({
+        vaults,
+        fsPath,
+        wsRoot,
+      });
       this.L.debug({ ctx, fsPath, msg: "preparing to delete" });
-      const nodeToDelete = _.find(engine.notes, { fname });
+      const nodeToDelete = (await engine.findNotesMeta({ fname, vault }))[0];
       if (_.isUndefined(nodeToDelete)) {
         throw new Error(`${fname} not found`);
       }

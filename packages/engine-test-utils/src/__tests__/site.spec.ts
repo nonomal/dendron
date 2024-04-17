@@ -1,15 +1,14 @@
 import {
   ConfigUtils,
   DendronSiteFM,
-  DuplicateNoteActionEnum,
   DVault,
   DVaultVisibility,
   NoteProps,
-  NotePropsDict,
-  NoteUtils,
+  NotePropsByIdDict,
+  ReducedDEngine,
   WorkspaceOpts,
 } from "@dendronhq/common-all";
-import { tmpDir, vault2Path } from "@dendronhq/common-server";
+import { DConfig, tmpDir, vault2Path } from "@dendronhq/common-server";
 import {
   AssertUtils,
   NoteTestUtilsV4,
@@ -22,7 +21,7 @@ import { TestConfigUtils } from "../config";
 import {
   createEngineFromEngine,
   createEngineFromServer,
-  createSiteConfig,
+  createPublishingConfig,
   runEngineTestV5,
 } from "../engine";
 import { ENGINE_HOOKS, ENGINE_HOOKS_MULTI } from "../presets";
@@ -41,7 +40,7 @@ const basicSetup = (preSetupHook?: SetupHookFunction) => ({
 const dupNote = (payload: DVault | string[]) => {
   const out: any = {
     duplicateNoteBehavior: {
-      action: DuplicateNoteActionEnum.useVault,
+      action: "useVault",
     },
   };
   if (_.isArray(payload)) {
@@ -54,9 +53,9 @@ const dupNote = (payload: DVault | string[]) => {
   return out;
 };
 
-const checkNotes = (opts: {
-  filteredNotes: NotePropsDict;
-  engineNotes: NotePropsDict;
+const checkNotes = async (opts: {
+  filteredNotes: NotePropsByIdDict;
+  engine: ReducedDEngine;
   match: ({
     id: string;
   } & Partial<NoteProps>)[];
@@ -64,13 +63,15 @@ const checkNotes = (opts: {
     id: string;
   }[];
 }) => {
-  const { noMatch, filteredNotes, engineNotes } = opts;
+  const { noMatch, filteredNotes, engine } = opts;
   const notesActual = _.sortBy(_.values(opts.filteredNotes), "id");
-  const notesExpected = _.map(opts.match, (opts) => {
-    let note = { ...engineNotes[opts.id] };
-    note = { ...note, ...opts };
-    return note;
-  });
+  const notesExpected = await Promise.all(
+    _.map(opts.match, async (opts) => {
+      let note = { ...(await engine.getNote(opts.id)).data };
+      note = { ...note, ...opts };
+      return note;
+    })
+  );
   expect(notesActual).toEqual(_.sortBy(notesExpected, "id"));
   if (noMatch) {
     expect(
@@ -94,20 +95,21 @@ describe("SiteUtils", () => {
         async ({ engine, vaults, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo", "foobar"],
                   siteRootDir,
+                  writeStubs: true,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -147,21 +149,21 @@ describe("SiteUtils", () => {
         async ({ engine, vaults, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo", "foobar"],
                   siteRootDir,
                   writeStubs: false,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -200,21 +202,21 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo"],
                   siteRootDir,
-                  usePrettyRefs: true,
+                  enablePrettyRefs: true,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -222,9 +224,9 @@ describe("SiteUtils", () => {
           );
           const { notes } = await SiteUtils.filterByConfig({ engine, config });
           expect(_.size(notes)).toEqual(1);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [{ id: "foo", parent: null, children: [] }],
             noMatch: [{ id: "foo.ch1" }],
           });
@@ -251,21 +253,21 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo"],
                   siteRootDir,
-                  usePrettyRefs: true,
+                  enablePrettyRefs: true,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -273,9 +275,9 @@ describe("SiteUtils", () => {
           );
           const { notes } = await SiteUtils.filterByConfig({ engine, config });
           expect(_.size(notes)).toEqual(2);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [{ id: "foo", parent: null }, { id: "foo.ch1" }],
           });
         },
@@ -350,11 +352,11 @@ describe("SiteUtils", () => {
         async ({ engine, vaults, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["root"],
                   siteRootDir,
                   ...dupNote(vaults[0]),
@@ -366,10 +368,10 @@ describe("SiteUtils", () => {
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -380,16 +382,16 @@ describe("SiteUtils", () => {
             engine,
             config,
           });
-          const root = NoteUtils.getNoteByFnameV5({
-            fname: "root",
-            notes: engine.notes,
-            vault: vaults[0],
-            wsRoot: engine.wsRoot,
-          });
+          const root = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: vaults[0],
+            })
+          )[0];
           expect(domains.length).toEqual(3);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [
               { id: root!.id },
               { id: "foo" },
@@ -412,15 +414,15 @@ describe("SiteUtils", () => {
         async ({ engine, vaults, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["root"],
                   siteRootDir,
                   ...dupNote(vaults[0]),
-                  config: {
+                  hierarchy: {
                     root: {
                       publishByDefault: false,
                     },
@@ -428,19 +430,19 @@ describe("SiteUtils", () => {
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
             }
           );
           const { notes } = await SiteUtils.filterByConfig({ engine, config });
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [],
           });
         },
@@ -458,21 +460,21 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo"],
                   siteRootDir,
-                  usePrettyRefs: true,
+                  enablePrettyRefs: true,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -483,9 +485,9 @@ describe("SiteUtils", () => {
             config,
           });
           expect(_.size(domains)).toEqual(2);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [{ id: "foo", parent: null }, { id: "foo.ch1" }],
           });
         },
@@ -502,11 +504,11 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo"],
                   siteRootDir,
                   ...dupNote(["vault2", "fooVault", "vault3"]),
@@ -518,10 +520,10 @@ describe("SiteUtils", () => {
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -532,9 +534,9 @@ describe("SiteUtils", () => {
             config,
           });
           expect(domains.length).toEqual(2);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [{ id: "foo-other", parent: null }, { id: "foo.ch1" }],
           });
         },
@@ -564,30 +566,30 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo", "bar"],
                   siteRootDir,
-                  usePrettyRefs: true,
+                  enablePrettyRefs: true,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
             }
           );
           const { notes } = await SiteUtils.filterByConfig({ engine, config });
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [
               { id: "foo", parent: null },
               { id: "foo.ch1" },
@@ -608,11 +610,11 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot, vaults }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["foo", "bar"],
                   siteRootDir,
                   ...dupNote(vaults[0]),
@@ -627,19 +629,19 @@ describe("SiteUtils", () => {
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
             }
           );
           const { notes } = await SiteUtils.filterByConfig({ engine, config });
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [
               { id: "foo", parent: null },
               { id: "foo.ch1" },
@@ -666,20 +668,20 @@ describe("SiteUtils", () => {
         async ({ engine, wsRoot }) => {
           const config = TestConfigUtils.withConfig(
             (config) => {
-              const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+              const defaultConfig = ConfigUtils.genDefaultConfig();
               ConfigUtils.setProp(
-                v4DefaultConfig,
-                "site",
-                createSiteConfig({
+                defaultConfig,
+                "publishing",
+                createPublishingConfig({
                   siteHierarchies: ["daily"],
                   siteRootDir,
                 })
               );
               ConfigUtils.setVaults(
-                v4DefaultConfig,
+                defaultConfig,
                 ConfigUtils.getVaults(config)
               );
-              return v4DefaultConfig;
+              return defaultConfig;
             },
             {
               wsRoot,
@@ -721,21 +723,21 @@ describe("SiteUtils", () => {
 
     test("blacklist vault", async () => {
       await runEngineTestV5(
-        async ({ engine, vaults, wsRoot }) => {
+        async ({ engine, wsRoot, vaults }) => {
           const { notes, domains } = await SiteUtils.filterByConfig({
             engine,
-            config: engine.config,
+            config: DConfig.readConfigSync(wsRoot),
           });
-          const root = NoteUtils.getNoteByFnameV5({
-            fname: "root",
-            notes: engine.notes,
-            vault: vaults[0],
-            wsRoot,
-          });
+          const root = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: vaults[0],
+            })
+          )[0];
           expect(domains.length).toEqual(2);
-          checkNotes({
+          await checkNotes({
             filteredNotes: notes,
-            engineNotes: engine.notes,
+            engine,
             match: [
               { id: root!.id, children: ["foo"] },
               { id: "foo" },
@@ -752,11 +754,11 @@ describe("SiteUtils", () => {
                 const vaults = ConfigUtils.getVaults(config);
                 const bvault = vaults.find((ent) => ent.fsPath === "vault2");
                 bvault!.visibility = DVaultVisibility.PRIVATE;
-                const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+                const defaultConfig = ConfigUtils.genDefaultConfig();
                 ConfigUtils.setProp(
-                  v4DefaultConfig,
-                  "site",
-                  createSiteConfig({
+                  defaultConfig,
+                  "publishing",
+                  createPublishingConfig({
                     siteHierarchies: ["root"],
                     siteRootDir,
                     ...dupNote(opts.vaults[0]),
@@ -768,10 +770,10 @@ describe("SiteUtils", () => {
                   })
                 );
                 ConfigUtils.setVaults(
-                  v4DefaultConfig,
+                  defaultConfig,
                   ConfigUtils.getVaults(config)
                 );
-                return v4DefaultConfig;
+                return defaultConfig;
               },
               { wsRoot: opts.wsRoot }
             );

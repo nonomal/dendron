@@ -1,4 +1,4 @@
-import { NoteProps, NoteUtils, VaultUtils } from "@dendronhq/common-all";
+import { NoteProps, VaultUtils } from "@dendronhq/common-all";
 import { AssertUtils, NoteTestUtilsV4 } from "@dendronhq/common-test-utils";
 import { describe, test, before } from "mocha";
 import { PreviewPanelFactory } from "../../components/views/PreviewViewFactory";
@@ -39,11 +39,9 @@ suite("GIVEN PreviewPanel", function () {
     let previewPanel: PreviewPanel;
     before(async () => {
       const { engine, vaults } = ExtensionProvider.getDWorkspace();
-      const note = NoteUtils.getNoteByFnameFromEngine({
-        fname: "root",
-        vault: vaults[0],
-        engine,
-      });
+      const note = (
+        await engine.findNotes({ fname: "root", vault: vaults[0] })
+      )[0];
       expect(note).toBeTruthy();
       await ExtensionProvider.getWSUtils().openNote(note!);
       previewPanel = PreviewPanelFactory.create(
@@ -109,6 +107,34 @@ suite("GIVEN PreviewPanel", function () {
                   VaultUtils.getRelPath(vaults[0]),
                   "assets",
                   "image.png"
+                ),
+              ],
+            })
+          ).toBeTruthy();
+        });
+      });
+
+      describe("AND image URI is encoded", () => {
+        test("THEN URL is correctly rewritten", async () => {
+          const { vaults } = ExtensionProvider.getDWorkspace();
+          const note = await makeTestNote({
+            previewPanel,
+            body: "![](assets/Pasted%20image%20%CE%B1.png)",
+          });
+          expect(
+            await AssertUtils.assertInString({
+              body: note.body,
+              match: [
+                "https://file",
+                "vscode",
+                path.posix.join(
+                  VaultUtils.getRelPath(vaults[0]),
+                  "assets",
+                  // `makeTestNote()` will invoke `rewriteImageUrls()`
+                  //  in which `makeImageUrlFullPath()` will expectedly decode "Pasted%20image%20%CE%B1.png"
+                  //    to "Pasted image α.png",
+                  //  then `panel.webview.asWebviewUri` encodes it back to "Pasted%20image%20%CE%B1.png".
+                  "Pasted%20image%20%CE%B1.png"
                 ),
               ],
             })

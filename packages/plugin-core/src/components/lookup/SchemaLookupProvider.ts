@@ -1,5 +1,6 @@
 import {
   DNodeUtils,
+  NoteLookupUtils,
   NoteQuickInput,
   NoteUtils,
   SchemaModuleProps,
@@ -185,8 +186,8 @@ export class SchemaLookupProvider implements ILookupProviderV3 {
     const start = process.hrtime();
 
     // get prior
-    const querystring = PickerUtilsV2.slashToDot(pickerValue);
-    const queryOrig = PickerUtilsV2.slashToDot(picker.value);
+    const querystring = NoteLookupUtils.slashToDot(pickerValue);
+    const queryOrig = NoteLookupUtils.slashToDot(picker.value);
     const ws = this._extension.getDWorkspace();
     let profile: number;
 
@@ -197,19 +198,23 @@ export class SchemaLookupProvider implements ILookupProviderV3 {
       if (querystring === "") {
         Logger.debug({ ctx, msg: "empty qs" });
         const nodes = _.map(
-          _.values(engine.schemas),
+          _.values((await engine.querySchema("*")).data),
           (ent: SchemaModuleProps) => {
             return SchemaUtils.getModuleRoot(ent);
           }
         );
-        picker.items = nodes.map((ent) => {
-          return DNodeUtils.enhancePropForQuickInputV3({
-            wsRoot: this._extension.getDWorkspace().wsRoot,
-            props: ent,
-            schemas: engine.schemas,
-            vaults: ws.vaults,
-          });
-        });
+        picker.items = await Promise.all(
+          nodes.map(async (ent) => {
+            return DNodeUtils.enhancePropForQuickInputV3({
+              wsRoot: this._extension.getDWorkspace().wsRoot,
+              props: ent,
+              schema: ent.schema
+                ? (await engine.getSchema(ent.schema.moduleId)).data
+                : undefined,
+              vaults: ws.vaults,
+            });
+          })
+        );
         return;
       }
 

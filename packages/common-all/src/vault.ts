@@ -3,11 +3,15 @@ import path from "path";
 import { FOLDERS, normalizeUnixPath } from ".";
 import { CONSTANTS } from "./constants";
 import { DendronError } from "./error";
-import { DVault, WorkspaceFolderRaw } from "./types";
+import { WorkspaceFolderRaw } from "./types";
+import { DVault } from "./types/DVault";
+import { NonOptional } from "./utils";
 
 export type SelfContainedVault = Omit<DVault, "selfContained"> & {
   selfContained: true;
 };
+
+export type SeedVault = NonOptional<DVault, "seed">;
 
 export class VaultUtils {
   static getName(vault: DVault): string {
@@ -42,20 +46,31 @@ export class VaultUtils {
     return vault.selfContained === true;
   }
 
+  static isSeed(vault: DVault): vault is SeedVault {
+    return vault.seed !== undefined;
+  }
+
   static isRemote(vault: DVault): boolean {
     return vault.remote !== undefined;
   }
 
   /**
-   * Path of vault relative to workspace root
+   * Path for the location of notes in this vault, relative to the workspace
+   * root.
+   *
+   * While for old vaults this is the same as
+   * {@link VaultUtils.getRelVaultRootPath}, for self contained vaults the notes
+   * are located inside the vault in the `notes` subdirectory.
+   *
    * @param vault
-   * @returns
+   * @returns path for location of the notes in the vault, relative to the
+   * workspace root
    */
   static getRelPath(vault: DVault) {
     if (VaultUtils.isSelfContained(vault)) {
       // Return the path to the notes folder inside the vault. This is for
       // compatibility with existing code.
-      return path.join(vault.fsPath, FOLDERS.NOTES);
+      return normalizeUnixPath(path.join(vault.fsPath, FOLDERS.NOTES));
     }
     if (vault.workspace) {
       return path.join(vault.workspace, vault.fsPath);
@@ -64,6 +79,21 @@ export class VaultUtils {
       return path.join("seeds", vault.seed, vault.fsPath);
     }
     return vault.fsPath;
+  }
+
+  /**
+   * Path for the location of vault root, relative to the workspace root.
+   *
+   * While for old vaults this is the same as {@link VaultUtils.getRelPath}, for
+   * self contained vaults the notes are located inside the vault in the `notes`
+   * subdirectory.
+   *
+   * @param vault
+   * @returns path for root of the vault, relative to the workspace root. May be "." for the top level self contained vault.
+   */
+  static getRelVaultRootPath(vault: DVault) {
+    if (VaultUtils.isSelfContained(vault)) return vault.fsPath;
+    return VaultUtils.getRelPath(vault);
   }
 
   static getVaultByName({
@@ -118,9 +148,10 @@ export class VaultUtils {
     const normPath = this.normPathByWsRoot({
       wsRoot,
       fsPath,
-    });
+    }).trim();
+    const unixPath = normalizeUnixPath(normPath);
     const vault = _.find(vaults, (ent) => {
-      return normPath.trim() === VaultUtils.getRelPath(ent).trim();
+      return unixPath === normalizeUnixPath(VaultUtils.getRelPath(ent).trim());
     });
     if (!vault) {
       throw new DendronError({
@@ -210,10 +241,13 @@ export class VaultUtils {
 
   static toWorkspaceFolder(vault: DVault): WorkspaceFolderRaw {
     const name = VaultUtils.getName(vault);
-    const _path = VaultUtils.getRelPath(vault);
+    const vaultPath = VaultUtils.getRelPath(vault);
     return {
-      path: _path,
-      name: name === _path || path.basename(_path) === name ? undefined : name,
+      path: normalizeUnixPath(vaultPath),
+      name:
+        name === vaultPath || path.basename(vaultPath) === name
+          ? undefined
+          : name,
     };
   }
 

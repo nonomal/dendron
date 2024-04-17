@@ -24,7 +24,7 @@ describe("GIVEN syncNote", () => {
               contentHash: undefined,
             },
           });
-          await engine.updateNote(newNote, { newNode: true });
+          await engine.writeNote(newNote, { metaOnly: true });
           expect(port).toBeTruthy();
           const url = APIUtils.getLocalEndpoint(port!);
 
@@ -59,7 +59,7 @@ describe("GIVEN syncNote", () => {
     test("THEN note is retrieved", async () => {
       await runEngineTestV5(
         async ({ port, wsRoot, engine }) => {
-          const note = engine.notes["foo"];
+          const note = (await engine.getNote("foo")).data!;
           expect(port).toBeTruthy();
           const url = APIUtils.getLocalEndpoint(port!);
 

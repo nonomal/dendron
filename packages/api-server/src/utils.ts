@@ -6,7 +6,6 @@ import {
   stringifyError,
 } from "@dendronhq/common-all";
 import { createLogger } from "@dendronhq/common-server";
-import { DendronEngineV2 } from "@dendronhq/engine-server";
 import execa, { ExecaChildProcess } from "execa";
 import _ from "lodash";
 import path from "path";
@@ -17,13 +16,7 @@ export function getWSKey(uri: string) {
   return _.trimEnd(uri, "/").toLowerCase();
 }
 
-export async function putWS({
-  ws,
-  engine,
-}: {
-  ws: string;
-  engine: DendronEngineV2;
-}) {
+export async function putWS({ ws, engine }: { ws: string; engine: DEngine }) {
   MemoryStore.instance().put(`ws:${getWSKey(ws)}`, engine);
 }
 
@@ -196,6 +189,7 @@ export class ServerUtils {
           NEXT_STATIC_ROOT: nextStaticRoot,
           GOOGLE_OAUTH_ID: googleOauthClientId,
           GOOGLE_OAUTH_SECRET: googleOauthClientSecret,
+          ELECTRON_RUN_AS_NODE: 1,
         } as SERVER_ENV,
       });
       logger.info({ state: "post:exec.node" });

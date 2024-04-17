@@ -2,41 +2,44 @@ import axios, { AxiosInstance } from "axios";
 import _ from "lodash";
 import * as querystring from "qs";
 import {
-  BulkAddNoteOpts,
-  ConfigGetPayload,
-  ConfigWriteOpts,
-  DEngineDeleteSchemaPayload,
-  DEngineQuery,
+  BulkGetNoteMetaResp,
+  BulkGetNoteResp,
+  BulkWriteNotesOpts,
   DNodeProps,
-  DVault,
-  EngineDeleteNotePayload,
-  EngineDeleteOptsV2,
+  EngineDeleteOpts,
   EngineInfoResp,
-  EngineUpdateNodesOptsV2,
   EngineWriteOptsV2,
-  GetNoteOptsV2,
-  GetNotePayload,
-  NoteProps,
+  FindNotesMetaResp,
+  GetNoteMetaResp,
+  GetNoteResp,
   RenameNoteOpts,
-  RenameNotePayload,
-  RespRequired,
-  RespV2,
   SchemaModuleProps,
   WriteNoteResp,
 } from ".";
 import { ThemeTarget, ThemeType } from "./constants";
-import { DendronError } from "./error";
+import { DendronCompositeError, DendronError } from "./error";
 import {
-  DEngineInitPayload,
-  GetDecorationsPayload,
-  GetNoteAnchorsPayload,
-  GetNoteBlocksPayload,
-  GetNoteLinksPayload,
-  NoteQueryResp,
+  BulkWriteNotesResp,
+  DeleteNoteResp,
+  DeleteSchemaResp,
+  DEngineInitResp,
+  EngineSchemaWriteOpts,
+  FindNotesResp,
+  GetDecorationsResp,
+  GetNoteBlocksResp,
+  GetSchemaResp,
+  QueryNotesResp,
+  QuerySchemaResp,
+  RenameNoteResp,
   RenderNoteOpts,
-  RenderNotePayload,
+  RenderNoteResp,
+  RespV3,
   VSRange,
+  WriteSchemaResp,
+  DendronConfig,
 } from "./types";
+import { DVault } from "./types/DVault";
+import { FindNoteOpts } from "./types/FindNoteOpts";
 
 // === Types
 
@@ -54,25 +57,13 @@ export function createNoOpLogger() {
   };
 }
 
-export type APIErrorType =
-  | "does_not_exist_error"
-  | "not_authorized_error"
-  | "unknown_error"
-  | "invalid_request_error";
-
-export interface IAPIErrorArgs {
-  type: APIErrorType;
-  message?: string;
-  code?: number;
-}
-
 interface IRequestArgs {
   headers: any;
 }
 
-interface IAPIPayload {
-  data: null | any | any[];
-  error: null | DendronError;
+export interface IAPIPayload {
+  data: undefined | any | any[];
+  error: undefined | DendronError | DendronCompositeError;
 }
 
 interface IAPIOpts {
@@ -108,14 +99,6 @@ interface IDoRequestArgs {
   json?: boolean;
 }
 
-/**
- @deprecated - use RespV2 instead
-  */
-type APIPayload<T = any> = {
-  error: DendronError | null;
-  data?: T;
-};
-
 // --- Requests
 export type WorkspaceInitRequest = {
   uri: string;
@@ -127,26 +110,27 @@ export type WorkspaceSyncRequest = WorkspaceRequest;
 
 export type WorkspaceRequest = { ws: string };
 
-export type EngineQueryRequest = DEngineQuery & { ws: string };
-export type EngineGetNoteByPathRequest = GetNoteOptsV2 & { ws: string };
+export type EngineGetNoteRequest = {
+  id: string;
+} & WorkspaceRequest;
+
+export type EngineBulkGetNoteRequest = {
+  ids: string[];
+} & WorkspaceRequest;
+
 export type EngineRenameNoteRequest = RenameNoteOpts & { ws: string };
-export type EngineUpdateNoteRequest = { ws: string } & {
-  note: NoteProps;
-  opts?: EngineUpdateNodesOptsV2;
-};
 export type EngineWriteRequest = {
   node: DNodeProps;
   opts?: EngineWriteOptsV2;
 } & { ws: string };
 export type EngineDeleteRequest = {
   id: string;
-  opts?: EngineDeleteOptsV2;
+  opts?: EngineDeleteOpts;
 } & { ws: string };
 export type EngineBulkAddRequest = {
-  opts: BulkAddNoteOpts;
+  opts: BulkWriteNotesOpts;
 } & { ws: string };
 
-export type EngineInfoRequest = WorkspaceRequest;
 export type NoteQueryRequest = {
   qs: string;
   vault?: DVault;
@@ -165,16 +149,10 @@ export type GetDecorationsRequest = {
   }[];
   text: string;
 } & Partial<WorkspaceRequest>;
-export type GetAnchorsRequest = { note: NoteProps };
-export type GetLinksRequest = {
-  note: NoteProps;
-  /** regular is backlinks for wikilinks, hashtags, user tags etc., candidate is for backlink candidates */
-  type: "regular" | "candidate";
-} & WorkspaceRequest;
 
 export type SchemaDeleteRequest = {
   id: string;
-  opts?: EngineDeleteOptsV2;
+  opts?: EngineDeleteOpts;
 } & Partial<WorkspaceRequest>;
 export type SchemaReadRequest = {
   id: string;
@@ -184,9 +162,8 @@ export type SchemaQueryRequest = {
 } & Partial<WorkspaceRequest>;
 export type SchemaWriteRequest = {
   schema: SchemaModuleProps;
+  opts?: EngineSchemaWriteOpts;
 } & WorkspaceRequest;
-
-export type SchemaUpdateRequest = SchemaWriteRequest;
 
 export type AssetGetRequest = { fpath: string } & WorkspaceRequest;
 
@@ -195,30 +172,7 @@ export type AssetGetThemeRequest = {
   themeType: ThemeType;
 } & WorkspaceRequest;
 
-// --- Payload
-export type InitializePayload = APIPayload<DEngineInitPayload>;
-
-export type WorkspaceSyncPayload = InitializePayload;
-export type WorkspaceListPayload = APIPayload<{ workspaces: string[] }>;
-
-export type EngineQueryPayload = APIPayload<DNodeProps[]>;
-export type EngineGetNoteByPathPayload = APIPayload<GetNotePayload>;
-export type EngineRenameNotePayload = APIPayload<RenameNotePayload>;
-export type EngineUpdateNotePayload = APIPayload<NoteProps>;
-export type EngineDeletePayload = APIPayload<EngineDeleteNotePayload>;
-
-export type SchemaDeletePayload = APIPayload<DEngineDeleteSchemaPayload>;
-export type SchemaReadPayload = APIPayload<SchemaModuleProps>;
-export type SchemaQueryPayload = APIPayload<SchemaModuleProps[]>;
-export type SchemaWritePayload = APIPayload<void>;
-export type SchemaUpdatePayload = APIPayload<void>;
-
 export class APIUtils {
-  static genUrlWithQS({ url, params }: { url: string; params: any }) {
-    const str = querystring.stringify(params);
-    return url + `?${str}`;
-  }
-
   /** Generate a localhost url to this API.
    *
    * Warning! In VSCode, the generated URL won't work if the user has a remote
@@ -257,7 +211,6 @@ abstract class API {
 
   _createPayload(data: any) {
     return {
-      error: null,
       data,
     };
   }
@@ -307,7 +260,11 @@ abstract class API {
       payload.error = resp.data.error;
     } catch (err: any) {
       this._log(payload.error, "error");
-      payload.error = err?.response?.data?.error || err;
+      // Log errors from express:
+      payload.error =
+        err?.response?.data?.error || // Corresponds to an expected error that we intentionally log in our code
+        err?.response?.data || // Corresponds to an unexpected server error (HTTP 500) if a data payload was added
+        err; // Corresponds to an axios (HTTP request) thrown error
     }
     if (payload.error) {
       this._log(payload.error, "error");
@@ -349,248 +306,199 @@ export class DendronAPI extends API {
     return _DendronAPI_INSTANCE;
   }
 
-  async assetGet(req: AssetGetRequest): Promise<DendronError | Buffer> {
-    const resp = await this._makeRequestRaw({
+  assetGet(req: AssetGetRequest): Promise<DendronError | Buffer> {
+    return this._makeRequestRaw({
       path: "assets/",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async assetGetTheme(
-    req: AssetGetThemeRequest
-  ): Promise<DendronError | Buffer> {
-    const resp = await this._makeRequestRaw({
+  assetGetTheme(req: AssetGetThemeRequest): Promise<DendronError | Buffer> {
+    return this._makeRequestRaw({
       path: "assets/theme",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async configGet(
-    req: WorkspaceRequest
-  ): Promise<APIPayload<ConfigGetPayload>> {
-    const resp = await this._makeRequest({
+  configGet(req: WorkspaceRequest): Promise<RespV3<DendronConfig>> {
+    return this._makeRequest({
       path: "config/get",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async configWrite(
-    req: ConfigWriteOpts & WorkspaceRequest
-  ): Promise<RespV2<void>> {
-    const resp = await this._makeRequest({
-      path: "config/write",
-      method: "post",
-      body: req,
-    });
-    return resp;
-  }
-
-  async workspaceInit(req: WorkspaceInitRequest): Promise<InitializePayload> {
-    const resp = await this._makeRequest({
+  workspaceInit(req: WorkspaceInitRequest): Promise<DEngineInitResp> {
+    return this._makeRequest({
       path: "workspace/initialize",
       method: "post",
       body: {
         ...req,
       },
     });
-    return resp;
   }
 
-  async workspaceList(): Promise<WorkspaceListPayload> {
-    const resp = await this._makeRequest({
-      path: "workspace/all",
-      method: "get",
-    });
-    return resp;
-  }
-
-  async workspaceSync(req: WorkspaceSyncRequest): Promise<InitializePayload> {
-    const resp = await this._makeRequest({
+  workspaceSync(req: WorkspaceSyncRequest): Promise<DEngineInitResp> {
+    return this._makeRequest({
       path: "workspace/sync",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async engineBulkAdd(req: EngineBulkAddRequest): Promise<WriteNoteResp> {
-    const resp = await this._makeRequest({
+  engineBulkAdd(req: EngineBulkAddRequest): Promise<BulkWriteNotesResp> {
+    return this._makeRequest({
       path: "note/bulkAdd",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async engineDelete(req: EngineDeleteRequest): Promise<EngineDeletePayload> {
-    const resp = await this._makeRequest({
+  engineDelete(req: EngineDeleteRequest): Promise<DeleteNoteResp> {
+    return this._makeRequest({
       path: "note/delete",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async engineGetNoteByPath(
-    req: EngineGetNoteByPathRequest
-  ): Promise<EngineGetNoteByPathPayload> {
-    const resp = await this._makeRequest({
-      path: "note/getByPath",
-      method: "post",
-      body: req,
-    });
-    return resp;
-  }
-
-  async engineInfo(): Promise<RespRequired<EngineInfoResp>> {
-    const resp = await this._makeRequest({
+  engineInfo(): Promise<EngineInfoResp> {
+    return this._makeRequest({
       path: "note/info",
       method: "get",
     });
-    return resp;
   }
 
-  async engineRenameNote(
-    req: EngineRenameNoteRequest
-  ): Promise<EngineRenameNotePayload> {
-    const resp = await this._makeRequest({
+  engineRenameNote(req: EngineRenameNoteRequest): Promise<RenameNoteResp> {
+    return this._makeRequest({
       path: "note/rename",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async engineUpdateNote(
-    req: EngineUpdateNoteRequest
-  ): Promise<EngineUpdateNotePayload> {
-    const resp = await this._makeRequest({
-      path: "note/update",
-      method: "post",
-      body: req,
-    });
-    return resp;
-  }
-
-  async engineWrite(req: EngineWriteRequest): Promise<WriteNoteResp> {
-    const resp = await this._makeRequest({
+  engineWrite(req: EngineWriteRequest): Promise<WriteNoteResp> {
+    return this._makeRequest({
       path: "note/write",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async noteQuery(req: NoteQueryRequest): Promise<NoteQueryResp> {
-    const resp = await this._makeRequest({
+  noteGet(req: EngineGetNoteRequest): Promise<GetNoteResp> {
+    return this._makeRequest({
+      path: "note/get",
+      method: "get",
+      qs: req,
+    });
+  }
+
+  noteGetMeta(req: EngineGetNoteRequest): Promise<GetNoteMetaResp> {
+    return this._makeRequest({
+      path: "note/getMeta",
+      method: "get",
+      qs: req,
+    });
+  }
+
+  noteBulkGet(req: EngineBulkGetNoteRequest): Promise<BulkGetNoteResp> {
+    return this._makeRequest({
+      path: "note/bulkGet",
+      method: "get",
+      qs: req,
+    });
+  }
+
+  noteBulkGetMeta(req: EngineBulkGetNoteRequest): Promise<BulkGetNoteMetaResp> {
+    return this._makeRequest({
+      path: "note/bulkGetMeta",
+      method: "get",
+      qs: req,
+    });
+  }
+
+  noteFind(req: APIRequest<FindNoteOpts>): Promise<RespV3<FindNotesResp>> {
+    return this._makeRequest({
+      path: "note/find",
+      method: "post",
+      body: req,
+    });
+  }
+
+  noteFindMeta(
+    req: APIRequest<FindNoteOpts>
+  ): Promise<RespV3<FindNotesMetaResp>> {
+    return this._makeRequest({
+      path: "note/findMeta",
+      method: "post",
+      body: req,
+    });
+  }
+
+  noteQuery(req: NoteQueryRequest): Promise<RespV3<QueryNotesResp>> {
+    return this._makeRequest({
       path: "note/query",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async noteRender(req: APIRequest<RenderNoteOpts>) {
-    const resp = await this._makeRequest<{
-      data: RenderNotePayload;
-      error: null | DendronError;
-    }>({
+  noteRender(req: APIRequest<RenderNoteOpts>): Promise<RenderNoteResp> {
+    return this._makeRequest({
       path: "note/render",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async getNoteBlocks(
-    req: GetNoteBlocksRequest
-  ): Promise<GetNoteBlocksPayload> {
-    const resp = await this._makeRequest({
+  getNoteBlocks(req: GetNoteBlocksRequest): Promise<GetNoteBlocksResp> {
+    return this._makeRequest({
       path: "note/blocks",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async getDecorations(
-    req: GetDecorationsRequest
-  ): Promise<GetDecorationsPayload> {
-    const resp = await this._makeRequest({
+  getDecorations(req: GetDecorationsRequest): Promise<GetDecorationsResp> {
+    return this._makeRequest({
       path: "note/decorations",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async getLinks(req: GetLinksRequest): Promise<GetNoteLinksPayload> {
-    const resp = await this._makeRequest({
-      path: "note/links",
-      method: "post",
-      body: req,
-    });
-    return resp;
-  }
-
-  async getAnchors(req: GetAnchorsRequest): Promise<GetNoteAnchorsPayload> {
-    const resp = await this._makeRequest({
-      path: "note/anchors",
-      method: "post",
-      body: req,
-    });
-    return resp;
-  }
-
-  async schemaDelete(req: SchemaDeleteRequest): Promise<SchemaDeletePayload> {
-    const resp = await this._makeRequest({
+  schemaDelete(req: SchemaDeleteRequest): Promise<DeleteSchemaResp> {
+    return this._makeRequest({
       path: "schema/delete",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async schemaRead(req: SchemaReadRequest): Promise<SchemaReadPayload> {
-    const resp = await this._makeRequest({
+  schemaRead(req: SchemaReadRequest): Promise<GetSchemaResp> {
+    return this._makeRequest({
       path: "schema/get",
       method: "get",
       qs: req,
     });
-    return resp;
   }
 
-  async schemaQuery(req: SchemaQueryRequest): Promise<SchemaQueryPayload> {
-    const resp = await this._makeRequest({
+  schemaQuery(req: SchemaQueryRequest): Promise<QuerySchemaResp> {
+    return this._makeRequest({
       path: "schema/query",
       method: "post",
       body: req,
     });
-    return resp;
   }
 
-  async schemaWrite(req: SchemaWriteRequest): Promise<SchemaWritePayload> {
-    const resp = await this._makeRequest({
+  schemaWrite(req: SchemaWriteRequest): Promise<WriteSchemaResp> {
+    return this._makeRequest({
       path: "schema/write",
       method: "post",
       body: req,
     });
-    return resp;
-  }
-
-  async schemaUpdate(req: SchemaUpdateRequest): Promise<SchemaUpdatePayload> {
-    const resp = await this._makeRequest({
-      path: "schema/update",
-      method: "post",
-      body: req,
-    });
-    return resp;
   }
 }
 

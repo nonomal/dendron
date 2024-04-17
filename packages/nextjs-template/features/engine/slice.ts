@@ -1,7 +1,7 @@
 import {
-  IntermediateDendronConfig,
+  DendronConfig,
   NoteProps,
-  NotePropsDict
+  NotePropsByIdDict,
 } from "@dendronhq/common-all";
 import {
   createSlice,
@@ -10,7 +10,7 @@ import {
   PayloadAction,
 } from "@dendronhq/common-frontend";
 
-export type BrowserEngineSliceState = EngineSliceState & {
+export type BrowserEngineSliceState = Omit<EngineSliceState, "noteFName"> & {
   noteIndex: NoteProps;
 };
 
@@ -29,11 +29,11 @@ export const slice = createSlice({
     },
     setConfig: (
       state: BrowserEngineSliceState,
-      action: PayloadAction<IntermediateDendronConfig>
+      action: PayloadAction<DendronConfig>
     ) => {
       state.config = action.payload;
     },
-    setNotes: (state, action: PayloadAction<NotePropsDict>) => {
+    setNotes: (state, action: PayloadAction<NotePropsByIdDict>) => {
       state.notes = action.payload;
     },
     setNoteIndex: (state, action: PayloadAction<NoteProps>) => {

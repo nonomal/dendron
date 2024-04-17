@@ -1,20 +1,12 @@
 import {
   DendronError,
-  EngineDeletePayload,
-  EngineDeleteRequest,
-  EngineGetNoteByPathPayload,
-  EngineGetNoteByPathRequest,
   EngineInfoResp,
-  EngineRenameNotePayload,
   EngineRenameNoteRequest,
-  EngineUpdateNotePayload,
-  EngineUpdateNoteRequest,
   NoteQueryRequest,
-  NoteQueryResp,
+  QueryNotesResp,
+  RenameNoteResp,
   RenderNoteOpts,
-  RenderNotePayload,
-  RespRequired,
-  RespV2,
+  RenderNoteResp,
 } from "@dendronhq/common-all";
 import { NodeJSUtils } from "@dendronhq/common-server";
 import { getLogger } from "../../core";
@@ -31,73 +23,38 @@ export class NoteController {
     return NoteController.singleton;
   }
 
-  async delete({
-    ws,
-    id,
-    opts,
-  }: EngineDeleteRequest): Promise<EngineDeletePayload> {
-    const engine = await getWSEngine({ ws });
-    try {
-      const data = await engine.deleteNote(id, opts);
-      return data;
-    } catch (err) {
-      return {
-        error: new DendronError({ message: JSON.stringify(err) }),
-        data: undefined,
-      };
-    }
-  }
-
-  async getByPath({
-    ws,
-    ...opts
-  }: EngineGetNoteByPathRequest): Promise<EngineGetNoteByPathPayload> {
-    const engine = await getWSEngine({ ws });
-    try {
-      const data = await engine.getNoteByPath(opts);
-      return data;
-    } catch (err) {
-      return {
-        error: new DendronError({ message: JSON.stringify(err) }),
-        data: undefined,
-      };
-    }
-  }
-
   async render({
     ws,
     ...opts
-  }: RenderNoteOpts & { ws: string }): Promise<RespV2<RenderNotePayload>> {
+  }: RenderNoteOpts & { ws: string }): Promise<RenderNoteResp> {
     const engine = await getWSEngine({ ws });
     const data = await engine.renderNote(opts);
     return data;
   }
 
-  async query({ ws, ...opts }: NoteQueryRequest): Promise<NoteQueryResp> {
+  async query({ ws, ...opts }: NoteQueryRequest): Promise<QueryNotesResp> {
     const engine = ws
       ? await getWSEngine({ ws })
       : MemoryStore.instance().getEngine();
-    try {
-      const data = await engine.queryNotes({ ...opts, originalQS: opts.qs });
-      return data;
-    } catch (err) {
-      return {
-        error: new DendronError({ message: JSON.stringify(err) }),
-        data: [],
-      };
-    }
+    return engine.queryNotes({ ...opts, originalQS: opts.qs });
   }
 
-  async info(): Promise<RespRequired<EngineInfoResp>> {
+  async info(): Promise<EngineInfoResp> {
     const ctx = "NoteController:info";
     getLogger().info({ ctx, msg: "enter" });
     try {
       const version = NodeJSUtils.getVersionFromPkg();
+      if (!version) {
+        return {
+          error: DendronError.createPlainError({
+            message: "Unable to read the Dendron version",
+          }),
+        };
+      }
       return {
         data: {
           version,
         },
-        error: undefined,
       };
     } catch (err) {
       getLogger().error({ ctx, err });
@@ -106,7 +63,6 @@ export class NoteController {
           payload: err,
           message: "unknown error",
         }),
-        data: undefined,
       };
     }
   }
@@ -114,7 +70,7 @@ export class NoteController {
   async rename({
     ws,
     ...opts
-  }: EngineRenameNoteRequest): Promise<EngineRenameNotePayload> {
+  }: EngineRenameNoteRequest): Promise<RenameNoteResp> {
     const engine = await getWSEngine({ ws });
     const ctx = "NoteController:rename";
     try {
@@ -128,24 +84,6 @@ export class NoteController {
           payload: err,
           message: "unknown error",
         }),
-        data: undefined,
-      };
-    }
-  }
-
-  async update({
-    ws,
-    note,
-    opts,
-  }: EngineUpdateNoteRequest): Promise<EngineUpdateNotePayload> {
-    const engine = await getWSEngine({ ws });
-    try {
-      const data = await engine.updateNote(note, opts);
-      return { error: null, data };
-    } catch (err) {
-      return {
-        error: new DendronError({ message: JSON.stringify(err) }),
-        data: undefined,
       };
     }
   }

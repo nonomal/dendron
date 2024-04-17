@@ -1,6 +1,7 @@
 import {
   ConfigUtils,
-  LegacyInsertNoteLinkAliasMode,
+  InsertNoteLinkAliasMode,
+  InsertNoteLinkAliasModeEnum,
   NoteProps,
   NoteUtils,
 } from "@dendronhq/common-all";
@@ -9,15 +10,18 @@ import _ from "lodash";
 import * as vscode from "vscode";
 import { MultiSelectBtn } from "../components/lookup/buttons";
 import { NoteLookupProviderUtils } from "../components/lookup/NoteLookupProviderUtils";
-import { DENDRON_COMMANDS } from "../constants";
+import { DendronContext, DENDRON_COMMANDS } from "../constants";
 import { VSCodeUtils } from "../vsCodeUtils";
 import { BasicCommand } from "./base";
 import { ExtensionProvider } from "../ExtensionProvider";
 import { NoteLookupProviderSuccessResp } from "../components/lookup/LookupProviderV3Interface";
+import { Disposable } from "vscode";
+import { AutoCompleter } from "../utils/autoCompleter";
+import { AutoCompletableRegistrar } from "../utils/registers/AutoCompletableRegistrar";
 
 type CommandInput = {
   multiSelect?: boolean;
-  aliasMode?: keyof typeof LegacyInsertNoteLinkAliasMode;
+  aliasMode?: InsertNoteLinkAliasMode;
 };
 
 type CommandOpts = {
@@ -54,6 +58,7 @@ export class InsertNoteLinkCommand extends BasicCommand<
     });
 
     return new Promise((resolve) => {
+      let disposable: Disposable;
       NoteLookupProviderUtils.subscribe({
         id: this.key,
         controller: lc,
@@ -61,12 +66,27 @@ export class InsertNoteLinkCommand extends BasicCommand<
         onDone: (event: HistoryEvent) => {
           const data = event.data as NoteLookupProviderSuccessResp;
           resolve({ notes: data.selectedItems, ...copts });
+          disposable?.dispose();
+          VSCodeUtils.setContext(DendronContext.NOTE_LOOK_UP_ACTIVE, false);
         },
       });
       lc.show({
         title: "Select note to link to",
         placeholder: "note",
         provider,
+      });
+
+      VSCodeUtils.setContext(DendronContext.NOTE_LOOK_UP_ACTIVE, true);
+      disposable = AutoCompletableRegistrar.OnAutoComplete(() => {
+        if (lc.quickPick) {
+          lc.quickPick.value = AutoCompleter.getAutoCompletedValue(
+            lc.quickPick
+          );
+
+          lc.provider.onUpdatePickerItems({
+            picker: lc.quickPick,
+          });
+        }
       });
     });
   }
@@ -96,7 +116,7 @@ export class InsertNoteLinkCommand extends BasicCommand<
 
     let links: string[] = [];
     switch (opts.aliasMode) {
-      case "snippet": {
+      case InsertNoteLinkAliasModeEnum.snippet: {
         links = opts.notes.map((note, index) => {
           return NoteUtils.createWikiLink({
             note,
@@ -105,7 +125,7 @@ export class InsertNoteLinkCommand extends BasicCommand<
         });
         break;
       }
-      case "selection": {
+      case InsertNoteLinkAliasModeEnum.selection: {
         let maybeAliasValue = "";
         const { range } =
           (await VSCodeUtils.extractRangeFromActiveEditor()) || {};
@@ -127,7 +147,7 @@ export class InsertNoteLinkCommand extends BasicCommand<
         });
         break;
       }
-      case "prompt": {
+      case InsertNoteLinkAliasModeEnum.prompt: {
         for (const note of opts.notes) {
           // eslint-disable-next-line no-await-in-loop
           const value = await this.promptForAlias(note);
@@ -146,13 +166,13 @@ export class InsertNoteLinkCommand extends BasicCommand<
         }
         break;
       }
-      case "title": {
+      case InsertNoteLinkAliasModeEnum.title: {
         links = opts.notes.map((note) => {
           return NoteUtils.createWikiLink({ note, alias: { mode: "title" } });
         });
         break;
       }
-      case "none":
+      case InsertNoteLinkAliasModeEnum.none:
       default: {
         links = opts.notes.map((note) => {
           return NoteUtils.createWikiLink({ note, alias: { mode: "none" } });
@@ -161,7 +181,7 @@ export class InsertNoteLinkCommand extends BasicCommand<
       }
     }
     const current = editor.selection;
-    if (opts.aliasMode === "snippet") {
+    if (opts.aliasMode === InsertNoteLinkAliasModeEnum.snippet) {
       const snippet = new vscode.SnippetString(links.join("\n"));
       await editor.insertSnippet(snippet, current);
     } else {

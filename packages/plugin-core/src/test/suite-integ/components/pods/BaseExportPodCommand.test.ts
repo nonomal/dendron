@@ -59,9 +59,12 @@ suite("BaseExportPodCommand", function () {
           const cmd = new TestExportPodCommand(
             ExtensionProvider.getExtension()
           );
-          const engine = ExtensionProvider.getEngine();
 
-          const testNote = engine.notes["foo"];
+          const { vaults } = ExtensionProvider.getDWorkspace();
+          const testNote = NoteUtils.create({
+            fname: "foo",
+            vault: vaults[0],
+          });
           const textToAppend = "BaseExportPodCommand testing";
           // onEngineNoteStateChanged is not being triggered by save so test to make sure that save is being triggered instead
           const disposable = vscode.workspace.onDidSaveTextDocument(
@@ -98,10 +101,13 @@ suite("BaseExportPodCommand", function () {
           const cmd = new TestExportPodCommand(
             ExtensionProvider.getExtension()
           );
-          const engine = ExtensionProvider.getEngine();
 
-          const testNote = engine.notes["foo"];
-          vscode.workspace.onDidSaveTextDocument(() => {
+          const { vaults } = ExtensionProvider.getDWorkspace();
+          const testNote = NoteUtils.create({
+            fname: "foo",
+            vault: vaults[0],
+          });
+          const disposable = vscode.workspace.onDidSaveTextDocument(() => {
             assert(false, "Callback not expected");
           });
 
@@ -110,8 +116,12 @@ suite("BaseExportPodCommand", function () {
             .then(async () => {
               cmd.run();
             });
+
           // Small sleep to ensure callback doesn't fire.
-          waitInMilliseconds(10).then(() => done());
+          waitInMilliseconds(10).then(async () => {
+            disposable.dispose();
+            done();
+          });
         });
       }
     );
@@ -199,19 +209,19 @@ suite("BaseExportPodCommand", function () {
             ExtensionProvider.getExtension()
           );
           const engine = ExtensionProvider.getEngine();
-          const { wsRoot, vaults } = engine;
-          const testNote1 = NoteUtils.getNoteByFnameV5({
-            fname: "test-note-for-pod1",
-            notes: engine.notes,
-            wsRoot,
-            vault: vaults[0],
-          }) as NoteProps;
-          const testNote2 = NoteUtils.getNoteByFnameV5({
-            fname: "test-note-for-pod2",
-            notes: engine.notes,
-            wsRoot,
-            vault: vaults[0],
-          }) as NoteProps;
+          const { vaults } = engine;
+          const testNote1 = (
+            await engine.findNotes({
+              fname: "test-note-for-pod1",
+              vault: vaults[0],
+            })
+          )[0];
+          const testNote2 = (
+            await engine.findNotes({
+              fname: "test-note-for-pod2",
+              vault: vaults[0],
+            })
+          )[0];
           const selectedItems = [
             { ...testNote1, label: "" },
             { ...testNote2, label: "" },
@@ -255,6 +265,38 @@ suite("BaseExportPodCommand", function () {
             exportScope: PodExportScope.Vault,
           });
           expect(payload?.payload.length).toEqual(4);
+        });
+      }
+    );
+
+    describeSingleWS(
+      "WHEN exporting with selection scope",
+      {
+        postSetupHook: ENGINE_HOOKS.setupBasic,
+      },
+      () => {
+        test("THEN export payload must contain the selection as note body", async () => {
+          const cmd = new TestExportPodCommand(
+            ExtensionProvider.getExtension()
+          );
+          const { wsRoot, vaults } = ExtensionProvider.getDWorkspace();
+          const notePath = path.join(
+            vault2Path({ vault: vaults[0], wsRoot }),
+            "root.md"
+          );
+          const editor = await VSCodeUtils.openFileInEditor(
+            vscode.Uri.file(notePath)
+          );
+          if (editor) {
+            editor.selection = new vscode.Selection(7, 0, 8, 0);
+          }
+
+          const payload = await cmd.enrichInputs({
+            exportScope: PodExportScope.Selection,
+          });
+          expect((payload?.payload as NoteProps[])[0].fname).toEqual("root");
+          expect((payload?.payload as NoteProps[]).length).toEqual(1);
+          expect(payload?.payload[0].body).toEqual("# Welcome to Dendron");
         });
       }
     );

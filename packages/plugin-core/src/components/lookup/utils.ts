@@ -9,10 +9,11 @@ import {
   DVault,
   FuseEngine,
   NoteProps,
-  NoteUtils,
+  NoteQuickInput,
   OrderedMatcher,
   RenameNoteOpts,
   RespV2,
+  TransformedQueryString,
   VaultUtils,
 } from "@dendronhq/common-all";
 import { vault2Path } from "@dendronhq/common-server";
@@ -29,14 +30,15 @@ import {
   CREATE_NEW_DETAIL_LIST,
   CREATE_NEW_LABEL,
   CREATE_NEW_NOTE_DETAIL,
+  CREATE_NEW_NOTE_WITH_TEMPLATE_DETAIL,
   MORE_RESULTS_LABEL,
 } from "./constants";
 import type { CreateQuickPickOpts } from "./LookupControllerV3Interface";
 import { OnAcceptHook } from "./LookupProviderV3Interface";
+import { TabUtils } from "./TabUtils";
 import {
   DendronQuickPickerV2,
   DendronQuickPickState,
-  TransformedQueryString,
   VaultSelectionMode,
 } from "./types";
 
@@ -153,8 +155,7 @@ export class ProviderAcceptHooks {
     // setup vars
     const oldVault = PickerUtilsV2.getVaultForOpenEditor();
     const newVault = quickpick.vault ? quickpick.vault : oldVault;
-    const { wsRoot, engine } = ExtensionProvider.getDWorkspace();
-    const notes = engine.notes;
+    const engine = ExtensionProvider.getEngine();
 
     // get old note
     const editor = VSCodeUtils.getActiveTextEditor() as TextEditor;
@@ -162,17 +163,12 @@ export class ProviderAcceptHooks {
     const oldFname = DNodeUtils.fname(oldUri.fsPath);
 
     const selectedItem = selectedItems[0];
-    const fname = PickerUtilsV2.isCreateNewNotePickForSingle(selectedItem)
+    const fname = PickerUtilsV2.isCreateNewNotePickedForSingle(selectedItem)
       ? quickpick.value
       : selectedItem.fname;
 
     // get new note
-    const newNote = NoteUtils.getNoteByFnameV5({
-      fname,
-      notes,
-      vault: newVault,
-      wsRoot,
-    });
+    const newNote = (await engine.findNotesMeta({ fname, vault: newVault }))[0];
     const isStub = newNote?.stub;
     if (newNote && !isStub) {
       const vaultName = VaultUtils.getName(newVault);
@@ -234,7 +230,28 @@ export class PickerUtilsV2 {
     quickPick.matchOnDescription = false;
     quickPick.matchOnDetail = false;
     quickPick.sortByLabel = false;
-    quickPick.showNote = async (uri) => window.showTextDocument(uri);
+    quickPick.showNote = async (uri) => {
+      let viewColumn;
+
+      // if current tab is a preview, open note in a different view
+      if (TabUtils.tabAPIAvailable()) {
+        const allTabGroups = TabUtils.getAllTabGroups();
+        const activeTabGroup = allTabGroups.activeTabGroup;
+        if (
+          activeTabGroup.activeTab &&
+          TabUtils.isPreviewTab(activeTabGroup.activeTab)
+        ) {
+          const nonPreviewTabGroup = _.find(
+            allTabGroups.all,
+            (tb) => tb.viewColumn !== activeTabGroup.viewColumn
+          );
+          if (nonPreviewTabGroup) {
+            viewColumn = nonPreviewTabGroup.viewColumn;
+          }
+        }
+      }
+      return window.showTextDocument(uri, { viewColumn });
+    };
     if (initialValue !== undefined) {
       quickPick.rawValue = initialValue;
       quickPick.prefix = initialValue;
@@ -319,25 +336,26 @@ export class PickerUtilsV2 {
    * Defaults to first vault if current note is not part of a vault
    * @returns
    */
-  static getVaultForOpenEditor(): DVault {
+  static getVaultForOpenEditor(fsPath?: string): DVault {
     const ctx = "getVaultForOpenEditor";
     const { vaults, wsRoot } = ExtensionProvider.getDWorkspace();
 
     let vault: DVault;
     const activeDocument = VSCodeUtils.getActiveTextEditor()?.document;
+    const fpath = fsPath || activeDocument?.uri.fsPath;
     if (
-      activeDocument &&
+      fpath &&
       WorkspaceUtils.isPathInWorkspace({
         wsRoot,
         vaults,
-        fpath: activeDocument.uri.fsPath,
+        fpath,
       })
     ) {
-      Logger.info({ ctx, activeDocument: activeDocument.fileName });
+      Logger.info({ ctx, activeDocument: fpath });
       vault = VaultUtils.getVaultByFilePath({
         vaults,
         wsRoot,
-        fsPath: activeDocument.uri.fsPath,
+        fsPath: fpath,
       });
     } else {
       Logger.info({ ctx, msg: "no active doc" });
@@ -377,7 +395,7 @@ export class PickerUtilsV2 {
   ): quickpick is Required<DendronQuickPickerV2> => {
     const { selectedItems, providerId } = opts;
     const nextPicker = quickpick.nextPicker;
-    const isNewPick = PickerUtilsV2.isCreateNewNotePick(selectedItems[0]);
+    const isNewPick = PickerUtilsV2.isCreateNewNotePicked(selectedItems[0]);
     const isNewPickAllowed = ["lookup", "dendron.moveHeader"];
     return (
       !_.isUndefined(nextPicker) &&
@@ -385,7 +403,7 @@ export class PickerUtilsV2 {
     );
   };
 
-  static isCreateNewNotePickForSingle(node: DNodePropsQuickInputV2): boolean {
+  static isCreateNewNotePickedForSingle(node: DNodePropsQuickInputV2): boolean {
     if (!node) {
       return true;
     }
@@ -400,7 +418,7 @@ export class PickerUtilsV2 {
     }
   }
 
-  static isCreateNewNotePick(node: DNodePropsQuickInputV2): boolean {
+  static isCreateNewNotePicked(node: DNodePropsQuickInputV2): boolean {
     if (!node) {
       return true;
     }
@@ -413,6 +431,15 @@ export class PickerUtilsV2 {
     } else {
       return false;
     }
+  }
+
+  static isCreateNewNoteWithTemplatePicked(
+    node: DNodePropsQuickInputV2
+  ): boolean {
+    return (
+      this.isCreateNewNotePicked(node) &&
+      node.detail === CREATE_NEW_NOTE_WITH_TEMPLATE_DETAIL
+    );
   }
 
   static isInputEmpty(value?: string): value is undefined {
@@ -533,7 +560,7 @@ export class PickerUtilsV2 {
     let allVaults = engine.vaults.sort(sortByPathNameFn);
 
     const vaultsWithMatchingHierarchy: VaultPickerItem[] | undefined =
-      queryResponse.data
+      queryResponse
         .filter((value) => value.fname === newQs)
         .map((value) => value.vault)
         .sort(sortByPathNameFn)
@@ -634,13 +661,9 @@ export class PickerUtilsV2 {
     delete picker.allResults;
   }
 
-  /**
-   @deprecated use {@link NoteLookupUtils.slashToDot}
-   * @param ent
-   * @returns
-   */
-  static slashToDot(ent: string) {
-    return ent.replace(/\//g, ".");
+  static noteQuickInputToNote(item: NoteQuickInput): NoteProps {
+    const props: NoteProps = _.omit(item, "label", "detail", "alwaysShow");
+    return props;
   }
 }
 

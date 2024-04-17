@@ -1,5 +1,5 @@
 import {
-  DendronTreeViewKey,
+  DefaultMap,
   DEngineClient,
   DVault,
   DWorkspaceV2,
@@ -8,20 +8,23 @@ import {
 } from "@dendronhq/common-all";
 import { IWorkspaceService, WorkspaceService } from "@dendronhq/engine-server";
 import {
+  CommentController,
+  CommentThread,
   Disposable,
   ExtensionContext,
   FileSystemWatcher,
-  WebviewViewProvider,
   WorkspaceConfiguration,
 } from "vscode";
-import { ICommandFactory } from "../commandFactoryInterface";
 import { ILookupControllerV3Factory } from "../components/lookup/LookupControllerV3Interface";
 import {
   INoteLookupProviderFactory,
   ISchemaLookupProviderFactory,
 } from "../components/lookup/LookupProviderV3Interface";
 import { IDendronExtension } from "../dendronExtensionInterface";
+import { FileWatcher } from "../fileWatcher";
+import { EngineAPIService } from "../services/EngineAPIService";
 import { IEngineAPIService } from "../services/EngineAPIServiceInterface";
+import { NoteTraitService } from "../services/NoteTraitService";
 import { ISchemaSyncService } from "../services/SchemaSyncServiceInterface";
 import { WSUtilsV2 } from "../WSUtilsV2";
 import { IWSUtilsV2 } from "../WSUtilsV2Interface";
@@ -36,6 +39,7 @@ export class MockDendronExtension implements IDendronExtension {
   private _context: ExtensionContext | undefined;
   private _wsRoot: string | undefined;
   private _vaults: DVault[] | undefined;
+  noteRefCommentController: CommentController;
 
   constructor({
     engine,
@@ -52,7 +56,20 @@ export class MockDendronExtension implements IDendronExtension {
     this._context = context;
     this._wsRoot = wsRoot;
     this._vaults = vaults;
+    this.noteRefCommentController = {} as CommentController;
   }
+  get podsDir(): string {
+    throw new Error("Method not implemented.");
+  }
+  get traitRegistrar(): NoteTraitService {
+    throw new Error("Method not implemented.");
+  }
+  serverProcess?: undefined;
+  setEngine(_svc: EngineAPIService): void {
+    throw new Error("Method not implemented.");
+  }
+  fileWatcher?: FileWatcher | undefined;
+  workspaceImpl?: DWorkspaceV2 | undefined;
 
   port?: number | undefined;
   get context(): ExtensionContext {
@@ -67,11 +84,15 @@ export class MockDendronExtension implements IDendronExtension {
   get type(): WorkspaceType {
     throw new Error("Method not implemented in MockDendronExtension");
   }
+
+  getCommentThreadsState(): {
+    inlineNoteRefs: DefaultMap<string, Map<string, CommentThread>>;
+  } {
+    throw new Error("Method not implemented in MockDendronExtension.");
+  }
+
   get wsUtils(): IWSUtilsV2 {
     return new WSUtilsV2(this);
-  }
-  get commandFactory(): ICommandFactory {
-    throw new Error("Method not implemented in MockDendronExtension");
   }
   get schemaSyncService(): ISchemaSyncService {
     throw new Error("Method not implemented in MockDendronExtension");
@@ -187,9 +208,5 @@ export class MockDendronExtension implements IDendronExtension {
     // TODO: the old implementation of this was wrong - it did not return WorkspaceConfiguration but a WorkspaceSettings object
     // since this doesn't seem to be used, just adding an exception here for future work
     throw Error("not implemented");
-  }
-
-  getTreeView(_key: DendronTreeViewKey): WebviewViewProvider {
-    throw new Error("Method not implemented in MockDendronExtension.");
   }
 }

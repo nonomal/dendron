@@ -8,25 +8,22 @@ const path = require("path");
  * Uses madge to check for circular dependencies. Issues soft warning if
  * circular dependencies detected
  */
-function checkCircularDependencies() {
-  const CIRCULAR_DEP_THRESHOLD = 2; // Lower this each time we fix a circular dependency
-  const rootPath = exec("git rev-parse --show-toplevel").stdout;
-  const filePath = path.resolve(rootPath, "packages/plugin-core");
-  madge(filePath, {
+function checkCircularDependencies(path, threshold) {
+  madge(path, {
     fileExtensions: ["ts"],
   }).then((res) => {
     const circDepCount = res.circular().length;
     if (circDepCount === 0) {
-      console.log("No circular dependencies detected");
-    } else if (circDepCount <= CIRCULAR_DEP_THRESHOLD) {
+      console.log(`No circular dependencies detected for ${path}`);
+    } else if (circDepCount <= threshold) {
       console.log(
-        `Circular dependency count of ${circDepCount} is lower than or equal threshold of ${CIRCULAR_DEP_THRESHOLD}`
+        `Circular dependency count of ${circDepCount} is lower than or equal threshold of ${threshold} for ${path}.`
       );
     } else {
       console.error(
         `ERROR: ${
           res.circular().length
-        } circular dependencies detected in plugin-core, which exceeds the threshold of ${CIRCULAR_DEP_THRESHOLD}. Please ensure you are not introducing new circular dependencies by running the following on the commit prior to your change: \nnpm -g install madge && cd $DENDRON_REPO_ROOT/packages/plugin-core && madge --circular --extensions ts .\n\nFor more details, see https://docs.dendron.so/notes/773e0b5a-510f-4c21-acf4-2d1ab3ed741e/#avoiding-circular-dependencies`
+        } circular dependencies detected in ${path}, which exceeds the threshold of ${threshold}. Please ensure you are not introducing new circular dependencies by running the following on the commit prior to your change: \nnpm -g install madge && cd ${path} && madge --circular --extensions ts .\n\nFor more details, see https://docs.dendron.so/notes/773e0b5a-510f-4c21-acf4-2d1ab3ed741e/#avoiding-circular-dependencies`
       );
       process.exit(1);
     }
@@ -34,7 +31,75 @@ function checkCircularDependencies() {
 }
 
 function main() {
-  checkCircularDependencies();
+  // Lower these each time we fix a circular dependency:
+  const COMMON_ALL_CIRCULAR_DEP_THRESHOLD = 0;
+  const COMMON_FRONTEND_CIRCULAR_DEP_THRESHOLD = 0;
+  const COMMON_SERVER_CIRCULAR_DEP_THRESHOLD = 1;
+  const CLI_CIRCULAR_DEP_THRESHOLD = 0;
+  const PLUGIN_VIEWS_CIRCULAR_DEP_THRESHOLD = 0;
+  const NEXTJS_TEMPLATE_CIRCULAR_DEP_THRESHOLD = 3;
+  const VIZ_CIRCULAR_DEP_THRESHOLD = 0;
+  const ENGINE_SERVER_CIRCULAR_DEP_THRESHOLD = 0;
+  const PLUGIN_CORE_CIRCULAR_DEP_THRESHOLD = 1;
+  const PODS_CORE_CIRCULAR_DEP_THRESHOLD = 0;
+  const UNIFIED_CIRCULAR_DEP_THRESHOLD = 22;
+
+  const rootPath = exec("git rev-parse --show-toplevel").stdout;
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/plugin-core"),
+    PLUGIN_CORE_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/common-all/src"),
+    COMMON_ALL_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/common-server/src"),
+    COMMON_SERVER_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/common-frontend/src"),
+    COMMON_FRONTEND_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/dendron-cli/src"),
+    CLI_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/unified/src"),
+    UNIFIED_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/dendron-plugin-views/src"),
+    PLUGIN_VIEWS_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/dendron-viz/src"),
+    VIZ_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/engine-server/src"),
+    ENGINE_SERVER_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/nextjs-template"),
+    NEXTJS_TEMPLATE_CIRCULAR_DEP_THRESHOLD
+  );
+
+  checkCircularDependencies(
+    path.resolve(rootPath, "packages/pods-core/src"),
+    PODS_CORE_CIRCULAR_DEP_THRESHOLD
+  );
 
   // Where we would push if we ran `git push`
   let upstream;
@@ -57,10 +122,11 @@ function main() {
       ".only": {
         rgx: /(suite|describe|it|test)\.only/,
         fileRgx: /(\.spec\.ts$)|(\.test\.ts$)/,
+        fileIgnoreRgx: /dnode\.spec\.ts/,
       },
       "debugger;": { rgx: /(^|\s)debugger/, fileRgx: /\.ts$/ },
       "rel import of monorepo pkg": {
-        rgx: /(\.\.\/(common-frontend|common-all|common-server|engine-server|dendron-cli|pods-core|api-server|common-test-utils|engine-test-utils|dendron-next-server))/,
+        rgx: /(\.\.\/(common-frontend|common-all|common-server|engine-server|dendron-cli|pods-core|api-server|common-test-utils|engine-test-utils))/,
         fileRgx: /\.ts[x]?$/,
       },
     },

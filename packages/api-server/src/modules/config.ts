@@ -1,10 +1,10 @@
 import {
-  ConfigGetPayload,
-  ConfigWriteOpts,
   DendronError,
-  RespV2,
+  DendronConfig,
+  RespV3,
   WorkspaceRequest,
 } from "@dendronhq/common-all";
+import { DConfig } from "@dendronhq/common-server";
 import { MemoryStore } from "../store/memoryStore";
 import { getWSEngine } from "../utils";
 
@@ -18,35 +18,15 @@ export class ConfigController {
     return ConfigController.singleton;
   }
 
-  async get({ ws }: WorkspaceRequest): Promise<RespV2<ConfigGetPayload>> {
+  async get({ ws }: WorkspaceRequest): Promise<RespV3<DendronConfig>> {
     const engine = ws
       ? await getWSEngine({ ws })
       : MemoryStore.instance().getEngine();
     try {
-      const resp = await engine.getConfig();
-      return resp;
+      return { data: DConfig.readConfigSync(engine.wsRoot) };
     } catch (err) {
       return {
         error: new DendronError({ message: JSON.stringify(err) }),
-        data: undefined,
-      };
-    }
-  }
-
-  async write({
-    ws,
-    ...opts
-  }: WorkspaceRequest & ConfigWriteOpts): Promise<RespV2<void>> {
-    const engine = ws
-      ? await getWSEngine({ ws })
-      : MemoryStore.instance().getEngine();
-    try {
-      const resp = await engine.writeConfig(opts);
-      return resp;
-    } catch (err) {
-      return {
-        error: new DendronError({ message: JSON.stringify(err) }),
-        data: undefined,
       };
     }
   }

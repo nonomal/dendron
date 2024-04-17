@@ -1,13 +1,13 @@
 import { ConfigUtils } from "@dendronhq/common-all";
 import { WorkspaceUtils } from "@dendronhq/engine-server";
 import _ from "lodash";
-import path from "path";
 import { Selection, window } from "vscode";
 import { CONFIG, DENDRON_COMMANDS } from "../constants";
+import { IDendronExtension } from "../dendronExtensionInterface";
 import { clipboard } from "../utils";
-import { getAnchorAt } from "../utils/editor";
+import { EditorUtils } from "../utils/EditorUtils";
 import { VSCodeUtils } from "../vsCodeUtils";
-import { DendronExtension, getDWorkspace } from "../workspace";
+import { DendronExtension } from "../workspace";
 import { WSUtils } from "../WSUtils";
 import { BasicCommand } from "./base";
 
@@ -20,6 +20,13 @@ export class CopyNoteURLCommand extends BasicCommand<
   CommandOutput
 > {
   key = DENDRON_COMMANDS.COPY_NOTE_URL.key;
+  private extension: IDendronExtension;
+
+  constructor(ext: IDendronExtension) {
+    super();
+    this.extension = ext;
+  }
+
   async gatherInputs(): Promise<any> {
     return {};
   }
@@ -33,8 +40,8 @@ export class CopyNoteURLCommand extends BasicCommand<
   }
 
   async execute() {
-    const config = getDWorkspace().config;
-    const publishingConfig = ConfigUtils.getPublishingConfig(config);
+    const { config } = this.extension.getDWorkspace();
+    const publishingConfig = ConfigUtils.getPublishing(config);
     const urlRoot =
       publishingConfig.siteUrl ||
       DendronExtension.configuration().get<string>(
@@ -48,23 +55,18 @@ export class CopyNoteURLCommand extends BasicCommand<
     }
     const vault = WSUtils.getVaultFromDocument(maybeTextEditor.document);
 
-    const maybeNote = WSUtils.getNoteFromDocument(maybeTextEditor.document);
-    if (_.isUndefined(maybeNote)) {
+    const note = await WSUtils.getNoteFromDocument(maybeTextEditor.document);
+    if (_.isUndefined(note)) {
       window.showErrorMessage("You need to be in a note to use this command");
       return;
     }
-    const fname = path.basename(maybeTextEditor.document.uri.fsPath, ".md");
-    const engine = getDWorkspace().engine;
-    const note = _.find(engine.notes, { fname });
-    if (!note) {
-      throw Error(`${fname} not found in engine`);
-    }
+    const { engine } = this.extension.getDWorkspace();
 
     // add the anchor if one is selected and exists
     const { selection, editor } = VSCodeUtils.getSelection();
     let anchor;
     if (selection) {
-      anchor = getAnchorAt({
+      anchor = EditorUtils.getAnchorAt({
         editor: editor!,
         position: selection.start,
         engine,

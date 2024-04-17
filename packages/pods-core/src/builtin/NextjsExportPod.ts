@@ -1,25 +1,40 @@
 import {
-  IntermediateDendronConfig,
-  DendronSiteConfig,
-  DEngineClient,
-  NoteProps,
-  NotePropsDict,
-  NoteUtils,
-  createSerializedFuseNoteIndex,
   ConfigUtils,
-  isWebUri,
-  getStage,
-  configIsV4,
+  CONSTANTS,
+  createSerializedFuseNoteIndex,
+  DendronError,
   DendronPublishingConfig,
+  DEngineClient,
+  ERROR_SEVERITY,
+  getStage,
+  DendronConfig,
+  isWebUri,
+  NoteProps,
+  NotePropsByIdDict,
+  NoteUtils,
+  PublishUtils,
+  RespV3,
+  Theme,
   TreeUtils,
+  processSidebar,
+  parseSidebarConfig,
+  DisabledSidebar,
+  DefaultSidebar,
+  NoteDicts,
+  NoteDictsUtils,
 } from "@dendronhq/common-all";
-import { simpleGit, SimpleGitResetMode } from "@dendronhq/common-server";
 import {
+  DConfig,
+  simpleGit,
+  SimpleGitResetMode,
+} from "@dendronhq/common-server";
+import { execa, SiteUtils } from "@dendronhq/engine-server";
+import {
+  getParsingDependencyDicts,
+  getRefId,
   MDUtilsV5,
   ProcFlavor,
-  SiteUtils,
-  execa,
-} from "@dendronhq/engine-server";
+} from "@dendronhq/unified";
 import { JSONSchemaType } from "ajv";
 import fs from "fs-extra";
 import _ from "lodash";
@@ -37,10 +52,10 @@ const TEMPLATE_BRANCH = "main";
 const $$ = execa.command;
 
 type NextjsExportPodCustomOpts = {
-  overrides?: Partial<DendronSiteConfig>;
+  overrides?: Partial<DendronPublishingConfig>;
 };
 
-export type BuildOverrides = Pick<DendronSiteConfig, "siteUrl">;
+export type BuildOverrides = Pick<DendronPublishingConfig, "siteUrl">;
 
 export enum PublishTarget {
   GITHUB = "github",
@@ -54,33 +69,48 @@ export const mapObject = (
 export const removeBodyFromNote = ({ body, ...note }: Record<string, any>) =>
   note;
 
-export const removeBodyFromNotesDict = (notes: NotePropsDict) =>
-  mapObject(notes, (_k, note: NotePropsDict) => removeBodyFromNote(note));
+export const removeBodyFromNotesDict = (notes: NotePropsByIdDict) =>
+  mapObject(notes, (_k, note: NotePropsByIdDict) => removeBodyFromNote(note));
 
 function getSiteConfig({
   config,
   overrides,
 }: {
-  config: IntermediateDendronConfig;
-  overrides?: Partial<DendronSiteConfig> | Partial<DendronPublishingConfig>;
-}): DendronSiteConfig | DendronPublishingConfig {
-  if (configIsV4(config)) {
-    const siteConfig = ConfigUtils.getSite(config) as DendronSiteConfig;
-    return {
-      ...siteConfig,
-      ...overrides,
-      usePrettyLinks: true,
-    } as DendronSiteConfig;
-  } else {
-    const publishingConfig = ConfigUtils.getPublishing(
-      config
-    ) as DendronPublishingConfig;
-    return {
-      ...publishingConfig,
-      ...overrides,
-      enablePrettyLinks: true,
-    } as DendronPublishingConfig;
+  config: DendronConfig;
+  overrides?: Partial<DendronPublishingConfig>;
+}): DendronPublishingConfig {
+  const publishingConfig = ConfigUtils.getPublishing(
+    config
+  ) as DendronPublishingConfig;
+  return {
+    ...publishingConfig,
+    ...overrides,
+    enablePrettyLinks: true,
+  } as DendronPublishingConfig;
+}
+
+async function validateSiteConfig({
+  config,
+  wsRoot,
+}: {
+  config: DendronPublishingConfig;
+  wsRoot: string;
+}): Promise<RespV3<undefined>> {
+  if (ConfigUtils.isDendronPublishingConfig(config)) {
+    if (config.theme === Theme.CUSTOM) {
+      if (
+        !(await fs.pathExists(path.join(wsRoot, CONSTANTS.CUSTOM_THEME_CSS)))
+      ) {
+        return {
+          error: new DendronError({
+            message: `A custom theme is set in the publishing config, but ${CONSTANTS.CUSTOM_THEME_CSS} does not exist in ${wsRoot}`,
+            severity: ERROR_SEVERITY.FATAL,
+          }),
+        };
+      }
+    }
   }
+  return { data: undefined };
 }
 
 export type NextjsExportConfig = ExportPodConfig & NextjsExportPodCustomOpts;
@@ -204,6 +234,26 @@ export class NextjsExportPodUtils {
     out.stdout?.pipe(process.stdout);
     return out.pid;
   }
+
+  static async loadSidebarsFile(
+    sidebarFilePath: string | false | undefined | null
+  ): Promise<unknown> {
+    if (sidebarFilePath === false) {
+      return DisabledSidebar;
+    }
+
+    if (_.isNil(sidebarFilePath)) {
+      return DefaultSidebar;
+    }
+
+    // Non-existent sidebars file: no sidebars
+    if (!(await fs.pathExists(sidebarFilePath))) {
+      throw new Error(`no sidebar file found at ${sidebarFilePath}`);
+    }
+
+    /* eslint-disable-next-line import/no-dynamic-require, global-require */
+    return require(path.resolve(sidebarFilePath));
+  }
 }
 
 export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
@@ -225,21 +275,23 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
   async _renderNote({
     engine,
     note,
-    notes,
     engineConfig,
+    noteCacheForRenderDict,
   }: {
     engine: DEngineClient;
     note: NoteProps;
-    notes: NotePropsDict;
-    engineConfig: IntermediateDendronConfig;
+    engineConfig: DendronConfig;
+    noteCacheForRenderDict: NoteDicts;
   }) {
     const proc = MDUtilsV5.procRehypeFull(
       {
-        engine,
+        noteToRender: note,
+        noteCacheForRenderDict,
         fname: note.fname,
         vault: note.vault,
         config: engineConfig,
-        notes,
+        vaults: engine.vaults,
+        wsRoot: engine.wsRoot,
       },
       { flavor: ProcFlavor.PUBLISHING }
     );
@@ -251,7 +303,7 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
     siteConfig,
     dest,
   }: {
-    siteConfig: DendronSiteConfig | DendronPublishingConfig;
+    siteConfig: DendronPublishingConfig;
     dest: URI;
   }) {
     // add .env.production, next will use this to replace `process.env` vars when building
@@ -272,7 +324,7 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
     dest,
   }: {
     wsRoot: string;
-    config: IntermediateDendronConfig;
+    config: DendronConfig;
     dest: string;
   }) {
     const ctx = "copyAssets";
@@ -280,7 +332,7 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
     const destPublicPath = path.join(dest, "public");
     fs.ensureDirSync(destPublicPath);
     const siteAssetsDir = path.join(destPublicPath, "assets");
-    const publishingConfig = ConfigUtils.getPublishingConfig(config);
+    const publishingConfig = ConfigUtils.getPublishing(config);
 
     // if copyAssets not set, skip it
     if (!publishingConfig.copyAssets) {
@@ -321,6 +373,20 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
         fs.copySync(headerPath, path.join(destPublicPath, "header.html"));
       }
     }
+
+    // custom components
+    if (PublishUtils.hasCustomSiteBanner(config)) {
+      const bannerPath =
+        PublishUtils.getCustomSiteBannerPathFromWorkspace(wsRoot);
+      if (!fs.existsSync(bannerPath)) {
+        throw Error(`no banner found at ${bannerPath}`);
+      }
+      fs.copySync(
+        bannerPath,
+        PublishUtils.getCustomSiteBannerPathToPublish(dest)
+      );
+    }
+
     // get favicon
     const siteFaviconPath = publishingConfig.siteFaviconPath;
     if (siteFaviconPath) {
@@ -333,15 +399,43 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
     const logo = ConfigUtils.getLogo(config);
     if (logo && !isWebUri(logo)) {
       const logoPath = path.join(wsRoot, logo);
-      fs.copySync(logoPath, path.join(siteAssetsDir, path.basename(logoPath)));
+      try {
+        const targetPath = path.join(siteAssetsDir, path.basename(logoPath));
+        await fs.copy(logoPath, targetPath);
+      } catch (err: any) {
+        // If the logo file was missing, that shouldn't crash the
+        // initialization. Warn the user and move on.
+        if (err?.code === "ENOENT") {
+          this.L.error({
+            ctx,
+            msg: "Failed to copy the logo",
+            logoPath,
+            siteAssetsDir,
+            err,
+          });
+        } else {
+          throw err;
+        }
+      }
     }
-    // /get cname
+    // get cname
     const githubConfig = ConfigUtils.getGithubConfig(config);
-    const githubCname = githubConfig.cname;
+    const githubCname = githubConfig?.cname;
     if (githubCname) {
       fs.writeFileSync(path.join(destPublicPath, "CNAME"), githubCname, {
         encoding: "utf8",
       });
+    }
+
+    // copy over the custom theme if it exists
+    const customThemePath = path.join(wsRoot, CONSTANTS.CUSTOM_THEME_CSS);
+    if (await fs.pathExists(customThemePath)) {
+      const publishedThemeRoot = path.join(destPublicPath, "themes");
+      fs.ensureDirSync(publishedThemeRoot);
+      fs.copySync(
+        customThemePath,
+        path.join(publishedThemeRoot, CONSTANTS.CUSTOM_THEME_CSS)
+      );
     }
   }
 
@@ -364,15 +458,20 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
     engine,
     note,
     notesDir,
-    notes,
     engineConfig,
+    noteCacheForRenderDict,
   }: Parameters<NextjsExportPod["_renderNote"]>[0] & {
     notesDir: string;
-    engineConfig: IntermediateDendronConfig;
+    engineConfig: DendronConfig;
   }) {
     const ctx = `${ID}:renderBodyToHTML`;
     this.L.debug({ ctx, msg: "renderNote:pre", note: note.id });
-    const out = await this._renderNote({ engine, note, notes, engineConfig });
+    const out = await this._renderNote({
+      engine,
+      note,
+      engineConfig,
+      noteCacheForRenderDict,
+    });
     const dst = path.join(notesDir, note.id + ".html");
     this.L.debug({ ctx, dst, msg: "writeNote" });
     return fs.writeFile(dst, out);
@@ -394,28 +493,64 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
   }
 
   async plant(opts: NextjsExportPlantOpts) {
+    MDUtilsV5.clearRefCache();
     const ctx = `${ID}:plant`;
     const { dest, engine, wsRoot, config: podConfig } = opts;
-
     const podDstDir = path.join(dest.fsPath, "data");
     fs.ensureDirSync(podDstDir);
+    const config = DConfig.readConfigSync(wsRoot);
 
     const siteConfig = getSiteConfig({
-      config: engine.config,
+      config,
       overrides: podConfig.overrides,
     });
 
-    await this.copyAssets({ wsRoot, config: engine.config, dest: dest.fsPath });
+    const { error } = await validateSiteConfig({ config: siteConfig, wsRoot });
+    if (error) {
+      throw error;
+    }
+
+    const sidebarPath =
+      "sidebarPath" in siteConfig ? siteConfig.sidebarPath : undefined;
+    const sidebarConfigInput = await NextjsExportPodUtils.loadSidebarsFile(
+      sidebarPath
+    );
+    const sidebarConfig = parseSidebarConfig(sidebarConfigInput);
+
+    // fail early, before computing `SiteUtils.filterByConfig`.
+    if (sidebarConfig.isErr()) {
+      throw sidebarConfig.error;
+    }
+
+    await this.copyAssets({ wsRoot, config, dest: dest.fsPath });
 
     this.L.info({ ctx, msg: "filtering notes..." });
-    const engineConfig: IntermediateDendronConfig =
-      ConfigUtils.overridePublishingConfig(engine.config, siteConfig);
+    const engineConfig: DendronConfig = ConfigUtils.overridePublishingConfig(
+      config,
+      siteConfig
+    );
 
     const { notes: publishedNotes, domains } = await SiteUtils.filterByConfig({
       engine,
       config: engineConfig,
       noExpandSingleDomain: true,
     });
+
+    const duplicateNoteBehavior =
+      "duplicateNoteBehavior" in siteConfig
+        ? siteConfig.duplicateNoteBehavior
+        : undefined;
+
+    const sidebarResp = processSidebar(sidebarConfig, {
+      notes: publishedNotes,
+      duplicateNoteBehavior,
+    });
+
+    // fail if sidebar could not be created
+    if (sidebarResp.isErr()) {
+      throw sidebarResp.error;
+    }
+
     const siteNotes = SiteUtils.createSiteOnlyNotes({
       engine,
     });
@@ -430,9 +565,19 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
       vaults: engine.vaults,
     };
 
+    // The reason to use all engine notes instead of just the published notes
+    // here is because a published note may link to a private note, in which
+    // case we still "need" the private note in the cache to do the rendering,
+    // since the title of the note is used in the (Private) placeholder for the
+    // link.
+    const noteDeps = await engine.findNotes({ excludeStub: true });
+    const fullDict = NoteDictsUtils.createNoteDicts(noteDeps);
+
     // render notes
     const notesBodyDir = path.join(podDstDir, "notes");
     const notesMetaDir = path.join(podDstDir, "meta");
+    const notesRefsDir = path.join(podDstDir, "refs");
+
     this.L.info({ ctx, msg: "ensuring notesDir...", notesDir: notesBodyDir });
     fs.ensureDirSync(notesBodyDir);
     fs.ensureDirSync(notesMetaDir);
@@ -444,8 +589,8 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
             engine,
             note,
             notesDir: notesBodyDir,
-            notes: publishedNotes,
             engineConfig,
+            noteCacheForRenderDict: fullDict,
           }),
           this.renderMetaToJSON({ note, notesDir: notesMetaDir }),
           this.renderBodyAsMD({ note, notesDir: notesBodyDir }),
@@ -453,11 +598,60 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
       })
     );
 
+    let refIds: string[] = [];
+    if (config.dev?.enableExperimentalIFrameNoteRef) {
+      const noteRefs = MDUtilsV5.getRefCache();
+      refIds = await Promise.all(
+        Object.keys(noteRefs).map(async (ent: string) => {
+          const { refId, prettyHAST } = noteRefs![ent];
+          const noteId = refId.id;
+          const noteForRef = (await engine.getNote(noteId)).data;
+
+          // shouldn't happen
+          if (!noteForRef) {
+            throw Error(`no note found for ${JSON.stringify(refId)}`);
+          }
+
+          const noteCacheForRenderDict = await getParsingDependencyDicts(
+            noteForRef,
+            engine,
+            config,
+            engine.vaults
+          );
+          const proc = MDUtilsV5.procRehypeFull(
+            {
+              // engine,
+              noteCacheForRenderDict,
+              noteToRender: noteForRef,
+              fname: noteForRef.fname,
+              vault: noteForRef.vault,
+              vaults: engine.vaults,
+              wsRoot: engine.wsRoot,
+              config,
+              insideNoteRef: true,
+            },
+            { flavor: ProcFlavor.PUBLISHING }
+          );
+
+          const out = proc.stringify(proc.runSync(prettyHAST));
+          const refIdString = getRefId(refId);
+          const dst = path.join(notesRefsDir, refIdString + ".html");
+          this.L.debug({ ctx, dst, msg: "writeNote" });
+          fs.ensureFileSync(dst);
+          fs.writeFileSync(dst, out);
+          return refIdString;
+        })
+      );
+    }
+
     const podDstPath = path.join(podDstDir, "notes.json");
     const podConfigDstPath = path.join(podDstDir, "dendron.json");
+    const refDstPath = path.join(podDstDir, "refs.json");
 
     const treeDstPath = path.join(podDstDir, "tree.json");
-    const tree = TreeUtils.generateTreeData(payload.notes, payload.domains);
+
+    const sidebar = sidebarResp.value;
+    const tree = TreeUtils.generateTreeData(payload.notes, sidebar);
 
     // Generate full text search data
     const fuseDstPath = path.join(podDstDir, "fuse.json");
@@ -472,6 +666,10 @@ export class NextjsExportPod extends ExportPod<NextjsExportConfig> {
         },
         { encoding: "utf8", spaces: 2 }
       ),
+      fs.writeJSONSync(refDstPath, refIds, {
+        encoding: "utf8",
+        spaces: 2,
+      }),
       fs.writeJSON(podConfigDstPath, engineConfig, {
         encoding: "utf8",
         spaces: 2,

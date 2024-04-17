@@ -1,12 +1,11 @@
 import {
-  DendronTreeViewKey,
+  DefaultMap,
   DWorkspaceV2,
   WorkspaceSettings,
   WorkspaceType,
 } from "@dendronhq/common-all";
-import { IWorkspaceService } from "@dendronhq/engine-server";
-import vscode from "vscode";
-import { ICommandFactory } from "./commandFactoryInterface";
+import { execa, IWorkspaceService } from "@dendronhq/engine-server";
+import vscode, { CommentController } from "vscode";
 import { ILookupControllerV3Factory } from "./components/lookup/LookupControllerV3Interface";
 import {
   INoteLookupProviderFactory,
@@ -14,6 +13,7 @@ import {
 } from "./components/lookup/LookupProviderV3Interface";
 import { FileWatcher } from "./fileWatcher";
 import { IEngineAPIService } from "./services/EngineAPIServiceInterface";
+import { NoteTraitService } from "./services/NoteTraitService";
 import { ISchemaSyncService } from "./services/SchemaSyncServiceInterface";
 import { IWSUtilsV2 } from "./WSUtilsV2Interface";
 
@@ -55,18 +55,23 @@ export type DendronWorkspaceSettings = Partial<{
  * */
 export interface IDendronExtension {
   port?: number;
+  /**
+   * If set, the server sub process that spawned the engine
+   */
+  serverProcess?: execa.ExecaChildProcess<string>;
   context: vscode.ExtensionContext;
   serverWatcher?: vscode.FileSystemWatcher;
   fileWatcher?: FileWatcher;
   type: WorkspaceType;
   wsUtils: IWSUtilsV2;
-  commandFactory: ICommandFactory;
   schemaSyncService: ISchemaSyncService;
   workspaceService?: IWorkspaceService;
 
   lookupControllerFactory: ILookupControllerV3Factory;
   noteLookupProviderFactory: INoteLookupProviderFactory;
   schemaLookupProviderFactory: ISchemaLookupProviderFactory;
+  workspaceImpl?: DWorkspaceV2;
+  noteRefCommentController: CommentController;
 
   activateWatchers(): Promise<void>;
   /**
@@ -76,6 +81,9 @@ export interface IDendronExtension {
   pauseWatchers<T = void>(cb: () => Promise<T>): Promise<T>;
 
   getClientAPIRootUrl(): Promise<string>;
+  getCommentThreadsState(): {
+    inlineNoteRefs: DefaultMap<string, Map<string, vscode.CommentThread>>;
+  };
 
   /** Shorthand for previously existing function getWorkspaceImplOrThrow() */
   getDWorkspace(): DWorkspaceV2;
@@ -102,6 +110,7 @@ export interface IDendronExtension {
   addDisposable(disposable: vscode.Disposable): void;
 
   getEngine(): IEngineAPIService;
+  setEngine(svc: IEngineAPIService): void;
 
   /**
    * Checks if a Dendron workspace is currently active.
@@ -124,8 +133,13 @@ export interface IDendronExtension {
   ): vscode.WorkspaceConfiguration;
 
   /**
-   * @deprecated Temporarily exposed to resolve circular dependencies
-   * Moving forward with the eventing pattern, we shouldn't need to expose any tree views anymore
+   * Gets an instance of the trait Registrar service, which contains information
+   * about registered Note Traits
    */
-  getTreeView(key: DendronTreeViewKey): vscode.WebviewViewProvider;
+  get traitRegistrar(): NoteTraitService;
+
+  /**
+   * Directory in which pod configs are located
+   */
+  get podsDir(): string;
 }

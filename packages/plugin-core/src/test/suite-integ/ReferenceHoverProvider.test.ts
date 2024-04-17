@@ -9,10 +9,10 @@ import fs from "fs-extra";
 import { before, describe } from "mocha";
 import path from "path";
 import * as vscode from "vscode";
+import { MarkdownString } from "vscode";
 import { ExtensionProvider } from "../../ExtensionProvider";
 import ReferenceHoverProvider from "../../features/ReferenceHoverProvider";
 import { VSCodeUtils } from "../../vsCodeUtils";
-import { getDWorkspace } from "../../workspace";
 import { WSUtils } from "../../WSUtils";
 import { expect, LocationTestUtils } from "../testUtilsv2";
 import {
@@ -117,7 +117,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             );
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -187,7 +187,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             expect(hover).toBeTruthy();
             // Local images should get full path to image, because hover preview otherwise can't find the image
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 `![](${path.join(
@@ -235,7 +235,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             expect(hover).toBeTruthy();
             // remote images should be unmodified
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "![](https://example.com/image.png)",
@@ -274,7 +274,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -320,7 +320,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -368,7 +368,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             );
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -412,7 +412,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -464,7 +464,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -493,7 +493,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
               expect(hover).toBeTruthy();
               expect(
                 await AssertUtils.assertInString({
-                  body: hover!.contents.join(""),
+                  body: (hover!.contents[0] as MarkdownString).value,
                   match: ["vault 1"],
                   nomatch: ["vault 0", "the test note"],
                 })
@@ -520,7 +520,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
               expect(hover).toBeTruthy();
               expect(
                 await AssertUtils.assertInString({
-                  body: hover!.contents.join(""),
+                  body: (hover!.contents[0] as MarkdownString).value,
                   match: ["vault 0"],
                   nomatch: ["vault 1", "the test note"],
                 })
@@ -547,7 +547,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
               expect(hover).toBeTruthy();
               expect(
                 await AssertUtils.assertInString({
-                  body: hover!.contents.join(""),
+                  body: (hover!.contents[0] as MarkdownString).value,
                   match: ["vault 1"],
                   nomatch: ["vault 0", "the test note"],
                 })
@@ -654,7 +654,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -700,7 +700,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -744,7 +744,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -788,7 +788,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Sint quo sunt maxime.",
                 "Nisi nam dolorem qui ut minima.",
@@ -835,7 +835,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             const hover = await provideForNote(editor);
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: [
                 "Numquam occaecati",
                 "Sint quo sunt maxime.",
@@ -881,7 +881,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
           );
           expect(hover).toBeTruthy();
           await AssertUtils.assertInString({
-            body: hover!.contents.join(""),
+            body: (hover!.contents[0] as MarkdownString).value,
             match: ["this is tag foo.test"],
           });
           done();
@@ -955,7 +955,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
           );
           expect(hover).toBeTruthy();
           await AssertUtils.assertInString({
-            body: hover!.contents.join(""),
+            body: (hover!.contents[0] as MarkdownString).value,
             match: ["this is user test.mctestface"],
           });
           done();
@@ -1032,7 +1032,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             );
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: ["this is tag foo.test"],
             });
             done();
@@ -1083,7 +1083,7 @@ suite("GIVEN ReferenceHoverProvider", function () {
             );
             expect(hover).toBeTruthy();
             await AssertUtils.assertInString({
-              body: hover!.contents.join(""),
+              body: (hover!.contents[0] as MarkdownString).value,
               match: ["this is tag foo.test"],
             });
             done();
@@ -1194,12 +1194,66 @@ suite("GIVEN ReferenceHoverProvider", function () {
         });
       });
 
+      describeMultiWS("GIVEN link to non-existent note", {}, () => {
+        before(async () => {
+          const { wsRoot, vaults } = ExtensionProvider.getDWorkspace();
+          const note = await NoteTestUtilsV4.createNote({
+            vault: vaults[0],
+            wsRoot,
+            fname: "source",
+            body: ["[[foo.bar.baz]]", "[[foo.bar..baz]]"].join("\n"),
+          });
+          await ExtensionProvider.getWSUtils().openNote(note);
+        });
+        describe("WHEN filename is valid", () => {
+          const position = new vscode.Position(7, 4);
+          test("THEN display message to create it with go to note", async () => {
+            const editor = VSCodeUtils.getActiveTextEditorOrThrow();
+            const provider = new ReferenceHoverProvider();
+            const hover = await provider.provideHover(
+              editor.document,
+              position
+            );
+            expect(hover).toBeTruthy();
+            expect(
+              await AssertUtils.assertInString({
+                body: hover!.contents.join(""),
+                match: [
+                  'Note foo.bar.baz is missing, use "Dendron: Go to Note" command to create it.',
+                ],
+              })
+            ).toBeTruthy();
+          });
+        });
+
+        describe("WHEN filename is invalid", () => {
+          const position = new vscode.Position(8, 4);
+          test("THEN display invalid filename warning and suggestion", async () => {
+            const editor = VSCodeUtils.getActiveTextEditorOrThrow();
+            const provider = new ReferenceHoverProvider();
+            const hover = await provider.provideHover(
+              editor.document,
+              position
+            );
+            expect(hover).toBeTruthy();
+            expect(
+              await AssertUtils.assertInString({
+                body: (hover!.contents[0] as MarkdownString).value,
+                match: [
+                  "Note `foo.bar..baz` is missing, and the filename is invalid for the following reason:\n\n `Hierarchies cannot be empty strings`.\n\n Maybe you meant `foo.bar.baz`?",
+                ],
+              })
+            ).toBeTruthy();
+          });
+        });
+      });
+
       describeSingleWS(
         "WHEN used on a link to a non-note file",
         { ctx },
         () => {
           before(async () => {
-            const { wsRoot, vaults } = getDWorkspace();
+            const { wsRoot, vaults } = ExtensionProvider.getDWorkspace();
             await fs.writeFile(
               path.join(wsRoot, "test.txt"),
               "Et nam velit laboriosam."

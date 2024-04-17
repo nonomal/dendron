@@ -36,7 +36,7 @@ export enum PublishEndpoint {
   REMOTE = "remote",
 }
 
-export enum ExtensionTarget {
+export enum ExtensionType {
   DENDRON = "dendron",
   NIGHTLY = "nightly",
 }
@@ -104,10 +104,6 @@ export class BuildUtils {
     return path.join(this.getLernaRoot(), "packages", "dendron-plugin-views");
   }
 
-  static getNextServerRootPath() {
-    return path.join(this.getLernaRoot(), "packages", "dendron-next-server");
-  }
-
   static getPkgMeta({ pkgPath }: { pkgPath: string }) {
     return fs.readJSONSync(pkgPath) as PkgJson;
   }
@@ -134,13 +130,6 @@ export class BuildUtils {
     return semver.inc(opts.currentVersion, opts.upgradeType) as string;
   }
 
-  static buildNextServer() {
-    const root = this.getNextServerRootPath();
-    $(`yarn`, { cwd: root });
-    $(`yarn setup`, { cwd: root });
-    $(`yarn build:prod`, { cwd: root });
-  }
-
   static buildPluginViews() {
     const root = this.getPluginViewsRootPath();
     $(`yarn build:prod`, { cwd: root });
@@ -149,7 +138,9 @@ export class BuildUtils {
   static installPluginDependencies() {
     // remove root package.json before installing locally
     fs.removeSync(path.join(this.getLernaRoot(), "package.json"));
-    return $(`yarn install --no-lockfile`, { cwd: this.getPluginRootPath() });
+    return $(`yarn install --no-lockfile --update-checksums`, {
+      cwd: this.getPluginRootPath(),
+    });
   }
 
   static installPluginLocally(version: string) {
@@ -165,15 +156,15 @@ export class BuildUtils {
   }
 
   static async compilePlugin({
-    fast,
     quiet,
+    skipSentry,
   }: {
-    fast?: boolean;
     quiet?: boolean;
+    skipSentry?: boolean;
   }) {
     await $$(`yarn build:prod`, {
       cwd: this.getPluginRootPath(),
-      env: fast ? { SKIP_SENTRY: "true" } : {},
+      env: skipSentry ? { SKIP_SENTRY: "true" } : {},
       quiet,
     });
   }
@@ -183,29 +174,35 @@ export class BuildUtils {
    * @returns
    */
   static async packagePluginDependencies({
-    fast,
+    skipSentry,
     quiet,
+    extensionTarget,
   }: {
-    fast?: boolean;
+    skipSentry?: boolean;
     quiet?: boolean;
+    extensionTarget?: string;
   }) {
-    await $$(`vsce package --yarn`, {
+    const execOpts = {
       cwd: this.getPluginRootPath(),
-      env: fast ? { SKIP_SENTRY: "true" } : {},
+      env: skipSentry ? { SKIP_SENTRY: "true" } : {},
       quiet,
-    });
+    };
+
+    if (extensionTarget) {
+      await $$(`vsce package --yarn --target ${extensionTarget}`, execOpts);
+    } else {
+      await $$(`vsce package --yarn`, execOpts);
+    }
   }
 
-  static async prepPluginPkg(
-    target: ExtensionTarget = ExtensionTarget.DENDRON
-  ) {
+  static async prepPluginPkg(target: ExtensionType = ExtensionType.DENDRON) {
     const pkgPath = path.join(this.getPluginRootPath(), "package.json");
 
     let version;
     let description;
     let icon;
 
-    if (target === ExtensionTarget.NIGHTLY) {
+    if (target === ExtensionType.NIGHTLY) {
       version = await this.getIncrementedVerForNightly();
       description =
         "This is a prerelease version of Dendron that may be unstable. Please install the main dendron extension instead.";
@@ -230,8 +227,25 @@ export class BuildUtils {
       dependencies: [
         "@dendronhq/common-test-utils",
         "@dendronhq/engine-test-utils",
+        "vscode-test",
       ],
     });
+
+    await Promise.all(
+      ["prisma-shim.js", "adm-zip.js"].map((ent) => {
+        return fs.copy(
+          path.join(
+            this.getPluginRootPath(),
+            "..",
+            "engine-server",
+            "src",
+            "drivers",
+            ent
+          ),
+          path.join(this.getPluginRootPath(), "dist", ent)
+        );
+      })
+    );
   }
 
   /**
@@ -336,6 +350,7 @@ export class BuildUtils {
   /**
    * Migrate assets from next-server, plugin-views, and api-server to plugin-core
    * @returns
+   * ^gg4woyhxe1xn
    */
   static async syncStaticAssets() {
     // all assets are stored here
@@ -346,11 +361,11 @@ export class BuildUtils {
     );
 
     const commonAssetsBuildRoot = path.join(commonAssetsRoot, "build");
+    const commonAssetsStylesRoot = path.join(commonAssetsRoot, "styles");
 
     // destination for assets
     const pluginAssetPath = path.join(this.getPluginRootPath(), "assets");
     const pluginStaticPath = path.join(pluginAssetPath, "static");
-    const nextServerRoot = this.getNextServerRootPath();
     const pluginViewsRoot = path.join(
       this.getLernaRoot(),
       "packages",
@@ -375,11 +390,8 @@ export class BuildUtils {
       path.join(pluginStaticPath, "css", "themes", "fonts")
     );
 
-    // copy assets from next server
-    // DEPRECATED
-    fs.copySync(path.join(nextServerRoot, "out"), pluginStaticPath);
     fs.copySync(
-      path.join(this.getNextServerRootPath(), "assets", "js"),
+      path.join(commonAssetsRoot, "assets", "js"),
       path.join(pluginStaticPath, "js")
     );
 
@@ -392,31 +404,47 @@ export class BuildUtils {
       path.join(pluginViewsRoot, "build", "static", "js"),
       path.join(pluginStaticPath, "js")
     );
+    fs.copySync(
+      path.join(commonAssetsStylesRoot, "scss"),
+      path.join(pluginViewsRoot, "src", "styles", "scss")
+    );
     return { staticPath: pluginStaticPath };
   }
 
+  // ^gxyyk2p87a5z
   static async syncStaticAssetsToNextjsTemplate() {
     // all assets are stored here
-    const commonAssetsBuildRoot = path.join(
+    const commonAssetsRoot = path.join(
       this.getLernaRoot(),
       "packages",
-      "common-assets",
-      "build"
+      "common-assets"
     );
+
     // destination for assets
-    const templatePublicPath = path.join(
+    const templatePath = path.join(
       this.getLernaRoot(),
       "packages",
-      "nextjs-template",
-      "public"
+      "nextjs-template"
     );
+
+    const templatePublicPath = path.join(templatePath, "public");
     const templateAssetPath = path.join(templatePublicPath, "assets-dendron");
 
     // copy files
     fs.ensureDirSync(templateAssetPath);
     fs.emptyDirSync(templateAssetPath);
-    fs.copySync(path.join(commonAssetsBuildRoot, "assets"), templateAssetPath);
-    fs.copySync(path.join(commonAssetsBuildRoot, "top"), templatePublicPath);
+    fs.copySync(
+      path.join(commonAssetsRoot, "build", "assets"),
+      templateAssetPath
+    );
+    fs.copySync(
+      path.join(commonAssetsRoot, "build", "top"),
+      templatePublicPath
+    );
+    fs.copySync(
+      path.join(commonAssetsRoot, "styles", "scss"),
+      path.join(templatePath, "styles", "scss")
+    );
   }
 
   static removeDevDepsFromPkgJson({
@@ -471,11 +499,6 @@ export class BuildUtils {
     }
     pkg.main = "dist/extension.js";
     fs.writeJSONSync(pkgPath, pkg, { spaces: 4 });
-  }
-
-  static async installAndPackageDeps({ cwd }: { cwd: string }) {
-    await $("yarn install --no-lockfile", { cwd });
-    await $("vsce package --yarn", { cwd });
   }
 
   static async publish({ cwd, osvxKey }: { cwd: string; osvxKey: string }) {

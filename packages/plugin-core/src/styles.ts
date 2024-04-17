@@ -3,15 +3,16 @@ import os from "os";
 import fs from "fs-extra";
 import { Uri } from "vscode";
 import { VSCodeUtils } from "./vsCodeUtils";
+import { FOLDERS } from "@dendronhq/common-all";
 
 // TODO: If you'd like to target a specific theme, pre-pend each class with either ".theme-dark" or ".theme-light"
 
 const STYLES_TEMPLATE = `/*
 Add Dendron graph styles below. The graph can be styled with any valid Cytoscape.js selector: https://js.cytoscape.org/#cy.style
-Full Dendron-specific styling documentation can be found here: [LINK HERE]
-
+Full Dendron-specific styling documentation can be found here: https://wiki.dendron.so/notes/587e6d62-3c5b-49b0-aedc-02f62f0448e6/#adding-styles
+If you are new to Cystoscape styling, use our built-in snippet to help you get started: https://wiki.dendron.so/notes/587e6d62-3c5b-49b0-aedc-02f62f0448e6#built-in-snippet copied
 Note: Empty selectors may affect parsing of following selectors, so be sure to comment/remove them when not in use.
-If style properties are not applying, make sure each property is followed with a semicolon.
+If style properties are not applying, make sure each property is followed with a semicolon. Troubleshoot guide can be found here: https://wiki.dendron.so/notes/587e6d62-3c5b-49b0-aedc-02f62f0448e6/#troubleshooting
 */
 
 /* Any graph node */
@@ -48,7 +49,7 @@ Obsidian.md style
 
 export class GraphStyleService {
   static styleFilePath() {
-    return path.join(os.homedir(), ".dendron", "styles.css");
+    return path.join(os.homedir(), FOLDERS.DENDRON_SYSTEM_ROOT, "styles.css");
   }
 
   static doesStyleFileExist() {

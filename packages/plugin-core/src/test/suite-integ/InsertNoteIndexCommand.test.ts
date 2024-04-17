@@ -1,13 +1,18 @@
-import { ENGINE_HOOKS, TestConfigUtils } from "@dendronhq/engine-test-utils";
-import { AssertUtils } from "@dendronhq/common-test-utils";
-import * as vscode from "vscode";
-import { describe } from "mocha";
-import { InsertNoteIndexCommand } from "../../commands/InsertNoteIndexCommand";
-import { VSCodeUtils } from "../../vsCodeUtils";
-import { expect } from "../testUtilsv2";
-import { runLegacyMultiWorkspaceTest, setupBeforeAfter } from "../testUtilsV3";
 import { ConfigUtils } from "@dendronhq/common-all";
+import { AssertUtils, NoteTestUtilsV4 } from "@dendronhq/common-test-utils";
+import { ENGINE_HOOKS, TestConfigUtils } from "@dendronhq/engine-test-utils";
+import { describe } from "mocha";
+import * as vscode from "vscode";
+import { InsertNoteIndexCommand } from "../../commands/InsertNoteIndexCommand";
+import { ExtensionProvider } from "../../ExtensionProvider";
+import { VSCodeUtils } from "../../vsCodeUtils";
 import { WSUtils } from "../../WSUtils";
+import { expect } from "../testUtilsv2";
+import {
+  describeMultiWS,
+  runLegacyMultiWorkspaceTest,
+  setupBeforeAfter,
+} from "../testUtilsV3";
 
 suite("InsertNoteIndex", function () {
   const ctx: vscode.ExtensionContext = setupBeforeAfter(this);
@@ -20,10 +25,12 @@ suite("InsertNoteIndex", function () {
           await ENGINE_HOOKS.setupBasic({ wsRoot, vaults });
         },
         onInit: async ({ engine }) => {
-          const notes = engine.notes;
-          const cmd = new InsertNoteIndexCommand();
+          const foo = (await engine.getNoteMeta("foo")).data!;
+          const cmd = new InsertNoteIndexCommand(
+            ExtensionProvider.getExtension()
+          );
 
-          await WSUtils.openNote(notes["foo"]);
+          await WSUtils.openNote(foo);
           const editor = VSCodeUtils.getActiveTextEditorOrThrow();
           editor.selection = new vscode.Selection(9, 0, 9, 0);
           await cmd.execute({});
@@ -46,10 +53,12 @@ suite("InsertNoteIndex", function () {
           await ENGINE_HOOKS.setupBasic({ wsRoot, vaults });
         },
         onInit: async ({ engine }) => {
-          const notes = engine.notes;
-          const cmd = new InsertNoteIndexCommand();
+          const foo = (await engine.getNoteMeta("foo")).data!;
+          const cmd = new InsertNoteIndexCommand(
+            ExtensionProvider.getExtension()
+          );
 
-          await WSUtils.openNote(notes["foo"]);
+          await WSUtils.openNote(foo);
           const editor = VSCodeUtils.getActiveTextEditorOrThrow();
           editor.selection = new vscode.Selection(9, 0, 9, 0);
           await cmd.execute({ marker: true });
@@ -93,10 +102,12 @@ suite("InsertNoteIndex", function () {
             { wsRoot }
           );
 
-          const notes = engine.notes;
-          const cmd = new InsertNoteIndexCommand();
+          const foo = (await engine.getNoteMeta("foo")).data!;
+          const cmd = new InsertNoteIndexCommand(
+            ExtensionProvider.getExtension()
+          );
 
-          await WSUtils.openNote(notes["foo"]);
+          await WSUtils.openNote(foo);
           const editor = VSCodeUtils.getActiveTextEditorOrThrow();
           editor.selection = new vscode.Selection(9, 0, 9, 0);
           await cmd.execute({});
@@ -131,10 +142,12 @@ suite("InsertNoteIndex", function () {
             { wsRoot }
           );
 
-          const notes = engine.notes;
-          const cmd = new InsertNoteIndexCommand();
+          const foo = (await engine.getNoteMeta("foo")).data!;
+          const cmd = new InsertNoteIndexCommand(
+            ExtensionProvider.getExtension()
+          );
 
-          await WSUtils.openNote(notes["foo"]);
+          await WSUtils.openNote(foo);
           const editor = VSCodeUtils.getActiveTextEditorOrThrow();
           editor.selection = new vscode.Selection(9, 0, 9, 0);
           await cmd.execute({});
@@ -157,4 +170,90 @@ suite("InsertNoteIndex", function () {
       });
     });
   });
+
+  describeMultiWS(
+    "GIVEN foo tag without parent note tags",
+    {
+      preSetupHook: async ({ wsRoot, vaults }) => {
+        await NoteTestUtilsV4.createNote({
+          vault: vaults[0],
+          wsRoot,
+          fname: "root",
+          body: "this is root",
+        });
+        await NoteTestUtilsV4.createNote({
+          vault: vaults[0],
+          wsRoot,
+          fname: "tags.foo",
+          body: "this is tag foo",
+        });
+      },
+    },
+    () => {
+      test("THEN insert note index add tags as index", async () => {
+        const engine = ExtensionProvider.getEngine();
+        const rootNote = (await engine.getNoteMeta("root")).data!;
+        await ExtensionProvider.getWSUtils().openNote(rootNote);
+        const editor = VSCodeUtils.getActiveTextEditorOrThrow();
+        const cmd = new InsertNoteIndexCommand(
+          ExtensionProvider.getExtension()
+        );
+        editor.selection = new vscode.Selection(9, 0, 9, 0);
+        await cmd.execute({});
+        const body = editor.document.getText();
+        expect(
+          await AssertUtils.assertInString({
+            body,
+            match: [["## Index", "- [[Tags|tags]]"].join("\n")],
+          })
+        );
+      });
+    }
+  );
+
+  describeMultiWS(
+    "GIVEN foo tag with parent note tags",
+    {
+      preSetupHook: async ({ wsRoot, vaults }) => {
+        await NoteTestUtilsV4.createNote({
+          vault: vaults[0],
+          wsRoot,
+          fname: "root",
+          body: "this is root",
+        });
+        await NoteTestUtilsV4.createNote({
+          vault: vaults[0],
+          wsRoot,
+          fname: "tags",
+          body: "this is tag",
+        });
+        await NoteTestUtilsV4.createNote({
+          vault: vaults[0],
+          wsRoot,
+          fname: "tags.foo",
+          body: "this is tag foo",
+        });
+      },
+    },
+    () => {
+      test("THEN insert note index add tags as index", async () => {
+        const engine = ExtensionProvider.getEngine();
+        const rootNote = (await engine.getNoteMeta("root")).data!;
+        await ExtensionProvider.getWSUtils().openNote(rootNote);
+        const editor = VSCodeUtils.getActiveTextEditorOrThrow();
+        const cmd = new InsertNoteIndexCommand(
+          ExtensionProvider.getExtension()
+        );
+        editor.selection = new vscode.Selection(9, 0, 9, 0);
+        await cmd.execute({});
+        const body = editor.document.getText();
+        expect(
+          await AssertUtils.assertInString({
+            body,
+            match: [["## Index", "- [[Tags|tags]]"].join("\n")],
+          })
+        );
+      });
+    }
+  );
 });

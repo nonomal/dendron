@@ -3,6 +3,8 @@ dev:
   enablePreviewV2: true
   enableExportPodV2: true
   enableSelfContainedVaults: true
+  enableEngineV3: true
+  enableExperimentalInlineNoteRef: true
 commands:
   lookup:
     note:
@@ -12,24 +14,26 @@ commands:
       bubbleUpCreateNew: true
       vaultSelectionModeOnCreate: smart
       fuzzThreshold: 0.2
-  insertNote:
-    initialValue: templates
   insertNoteLink:
     aliasMode: none
     enableMultiSelect: false
   insertNoteIndex:
     enableMarker: false
   randomNote: {}
-  copyNoteLink: {}
+  copyNoteLink:
+    aliasMode: title
+  templateHierarchy: template
 workspace:
   dendronVersion: 0.83.0
+  enablePersistentHistory: true
+  mainVault: vault2
   vaults:
     - fsPath: dependencies/localhost/vault3
       selfContained: true
       name: vault3
     - fsPath: vault2
       visibility: private
-      siteUrl: "https://vault2.com"
+      siteUrl: https://vault2.com
     - fsPath: vault
     - fsPath: assets
   journal:
@@ -43,11 +47,13 @@ workspace:
     addBehavior: asOwnDomain
   graph:
     zoomSpeed: 1
+    createStub: false
   enableAutoCreateOnDefinition: false
   enableXVaultWikiLink: false
   enableRemoteVaultInit: true
   workspaceVaultSyncMode: noCommit
   enableAutoFoldFrontmatter: false
+  enablePerfMode: true
   maxPreviewsCached: 10
   maxNoteLength: 204800
   task:
@@ -70,19 +76,25 @@ workspace:
       L: low
     todoIntegration: false
     createTaskSelectionType: selection2link
+    taskCompleteStatus:
+      - x
+      - done
   enableUserTags: true
   enableHashTags: true
   enableEditorDecorations: true
+  enableFullHierarchyNoteTitle: false
 preview:
   enableFMTitle: true
   enableNoteTitleForLink: true
-  enableMermaid: true
   enablePrettyRefs: true
   enableKatex: true
   automaticallyShowPreview: false
   enableFrontmatterTags: true
   enableHashesForFMTags: false
 publishing:
+  enableHierarchyDisplay: false
+  hierarchyDisplayTitle: Sub Notes
+  theme: light
   enableFMTitle: true
   enableNoteTitleForLink: true
   enableMermaid: true
@@ -95,10 +107,11 @@ publishing:
   siteHierarchies:
     - dendron
     - bar
+    - foo
     - tags
+    - task
   enableSiteLastModified: true
   siteRootDir: docs
-  siteUrl: https://foo.dev.dendron.so
   enableFrontmatterTags: true
   enableHashesForFMTags: false
   enableRandomlyColoredTags: true
@@ -127,6 +140,5 @@ publishing:
     editBranch: main
     editViewMode: edit
     editRepository: https://github.com/kevinslin/dendron-11ty-test
-  enableContainers: false
-  generateChangelog: false
   enablePrettyLinks: true
+  enableTaskNotes: true

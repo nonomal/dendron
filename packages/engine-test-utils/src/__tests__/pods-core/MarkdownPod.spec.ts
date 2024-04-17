@@ -1,10 +1,5 @@
-import {
-  ConfigUtils,
-  NoteUtils,
-  VaultUtils,
-  WorkspaceOpts,
-} from "@dendronhq/common-all";
-import { tmpDir, vault2Path } from "@dendronhq/common-server";
+import { ConfigUtils, VaultUtils, WorkspaceOpts } from "@dendronhq/common-all";
+import { DConfig, tmpDir, vault2Path } from "@dendronhq/common-server";
 import {
   FileTestUtils,
   NoteTestUtilsV4,
@@ -19,7 +14,7 @@ import fs from "fs-extra";
 import _ from "lodash";
 import path from "path";
 import { TestConfigUtils } from "../../config";
-import { createSiteConfig, runEngineTestV5 } from "../../engine";
+import { createPublishingConfig, runEngineTestV5 } from "../../engine";
 import { ENGINE_HOOKS } from "../../presets";
 import { checkNotInString, checkString, TestSeedUtils } from "../../utils";
 
@@ -159,20 +154,17 @@ describe("markdown publish pod", () => {
         const vaultName = VaultUtils.getName(vaults[0]);
         const config = TestConfigUtils.withConfig(
           (config) => {
-            const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+            const defaultConfig = ConfigUtils.genDefaultConfig();
             ConfigUtils.setProp(
-              v4DefaultConfig,
-              "site",
-              createSiteConfig({
+              defaultConfig,
+              "publishing",
+              createPublishingConfig({
                 siteHierarchies: ["test-wikilink-to-url"],
                 siteRootDir: "docs",
               })
             );
-            ConfigUtils.setVaults(
-              v4DefaultConfig,
-              ConfigUtils.getVaults(config)
-            );
-            return v4DefaultConfig;
+            ConfigUtils.setVaults(defaultConfig, ConfigUtils.getVaults(config));
+            return defaultConfig;
           },
           {
             wsRoot,
@@ -190,12 +182,9 @@ describe("markdown publish pod", () => {
             wikiLinkToURL: true,
           },
         });
-        // note id is foo.one, hence notes/foo.one.html
-        expect(resp).toContain("(https://localhost:8080/notes/foo.one.html)");
-        await checkString(
-          resp,
-          "[Link](https://localhost:8080/notes/foo.one.html)"
-        );
+        // note id is foo.one, hence notes/foo.one
+        expect(resp).toContain("(https://localhost:8080/notes/foo.one)");
+        await checkString(resp, "[Link](https://localhost:8080/notes/foo.one)");
       },
       { expect, preSetupHook: setupBasic }
     );
@@ -208,25 +197,22 @@ describe("markdown publish pod", () => {
         const vaultName = VaultUtils.getName(vaults[0]);
         const config = TestConfigUtils.withConfig(
           (config) => {
-            const v4DefaultConfig = ConfigUtils.genDefaultV4Config();
+            const defaultConfig = ConfigUtils.genDefaultConfig();
             ConfigUtils.setWorkspaceProp(
-              v4DefaultConfig,
+              defaultConfig,
               "enableXVaultWikiLink",
               true
             );
             ConfigUtils.setProp(
-              v4DefaultConfig,
-              "site",
-              createSiteConfig({
+              defaultConfig,
+              "publishing",
+              createPublishingConfig({
                 siteHierarchies: ["test-wikilink-to-url"],
                 siteRootDir: "docs",
               })
             );
-            ConfigUtils.setVaults(
-              v4DefaultConfig,
-              ConfigUtils.getVaults(config)
-            );
-            return v4DefaultConfig;
+            ConfigUtils.setVaults(defaultConfig, ConfigUtils.getVaults(config));
+            return defaultConfig;
           },
           {
             wsRoot,
@@ -245,9 +231,9 @@ describe("markdown publish pod", () => {
             wikiLinkToURL: true,
           },
         });
-        // note id is foo.one, hence notes/foo.one.html
-        expect(resp).toContain("https://localhost:8080/notes/test1.html");
-        await checkNotInString(resp, "https://localhost:8080/notes/test2.html");
+        // note id is foo.one, hence notes/foo.one
+        expect(resp).toContain("https://localhost:8080/notes/test1");
+        await checkNotInString(resp, "https://localhost:8080/notes/test2");
       },
       { expect, preSetupHook: setupBasicMulti }
     );
@@ -267,8 +253,8 @@ describe("markdown publish pod", () => {
           },
         });
         const seedId = TestSeedUtils.defaultSeedId();
-        engine.config = TestConfigUtils.getConfig({ wsRoot });
-        const vaultsConfig = ConfigUtils.getVaults(engine.config);
+        const config = DConfig.readConfigSync(wsRoot);
+        const vaultsConfig = ConfigUtils.getVaults(config);
         engine.vaults = vaultsConfig;
         const vault = VaultUtils.getVaultByName({
           vaults: engine.vaults,
@@ -292,7 +278,7 @@ describe("markdown publish pod", () => {
           engine,
           vaults,
           wsRoot,
-          dendronConfig: engine.config,
+          dendronConfig: config,
           config: {
             fname: "parent",
             vaultName: seedId,
@@ -364,12 +350,12 @@ describe("markdown import pod", () => {
             vaultName,
           },
         });
-        const note = NoteUtils.getNoteOrThrow({
-          fname: "project.p2.n1",
-          notes: engine.notes,
-          vault,
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotes({
+            fname: "project.p2.n1",
+            vault,
+          })
+        )[0];
         expect(_.trim(note.body)).toEqual("[[project.p1.n1]]");
       },
       {
@@ -403,12 +389,12 @@ describe("markdown import pod", () => {
         });
         const vault = vaults[0];
         vpath = vault2Path({ wsRoot, vault });
-        const note = NoteUtils.getNoteOrThrow({
-          fname: "project.p1.n1",
-          notes: engine.notes,
-          vault: vaults[0],
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotes({
+            fname: "project.p1.n1",
+            vault: vaults[0],
+          })
+        )[0];
         expect(note.id).toEqual("project.p1.n1");
       },
       {
@@ -440,12 +426,12 @@ describe("markdown import pod", () => {
         });
         const vault = vaults[0];
         vpath = vault2Path({ wsRoot, vault });
-        const note = NoteUtils.getNoteOrThrow({
-          fname: "project.p1.n1",
-          notes: engine.notes,
-          vault: vaults[0],
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotes({
+            fname: "project.p1.n1",
+            vault: vaults[0],
+          })
+        )[0];
         expect(note.custom.banana).toEqual(42);
       },
       {
@@ -673,12 +659,12 @@ describe("markdown import pod", () => {
             },
           },
         });
-        const note = NoteUtils.getNoteOrThrow({
-          fname: "frontmatterTest",
-          notes: engine.notes,
-          vault,
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotes({
+            fname: "frontmatterTest",
+            vault,
+          })
+        )[0];
         expect(note.custom.obsidianId).toContain(`testing`);
         expect(note.custom.status).toContain(`wip`);
         expect(note.custom.created_imported).toContain(`10 Jan`);
@@ -711,7 +697,6 @@ describe("markdown export pod", () => {
     await runEngineTestV5(
       async ({ engine, vaults, wsRoot }) => {
         const pod = new MarkdownExportPod();
-        engine.config.useFMTitle = true;
         await pod.execute({
           engine,
           vaults,
@@ -759,7 +744,6 @@ describe("markdown export pod", () => {
     await runEngineTestV5(
       async ({ engine, vaults, wsRoot }) => {
         const pod = new MarkdownExportPod();
-        engine.config.useFMTitle = true;
         await pod.execute({
           engine,
           vaults,
@@ -811,7 +795,6 @@ describe("markdown export pod", () => {
     await runEngineTestV5(
       async ({ engine, vaults, wsRoot }) => {
         const pod = new MarkdownExportPod();
-        engine.config.useFMTitle = true;
         await pod.execute({
           engine,
           vaults,

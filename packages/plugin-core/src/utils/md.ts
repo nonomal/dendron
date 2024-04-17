@@ -6,19 +6,21 @@ import {
   DVault,
   isBlockAnchor,
   isLineAnchor,
+  isNotUndefined,
   NoteProps,
+  NotePropsMeta,
   NoteUtils,
   TAGS_HIERARCHY,
   USERS_HIERARCHY,
 } from "@dendronhq/common-all";
+import { WorkspaceUtils } from "@dendronhq/engine-server";
 import {
   HASHTAG_REGEX_BASIC,
   HASHTAG_REGEX_LOOSE,
   LinkUtils,
   RemarkUtils,
   USERTAG_REGEX_LOOSE,
-  WorkspaceUtils,
-} from "@dendronhq/engine-server";
+} from "@dendronhq/unified";
 import { sort as sortPaths } from "cross-path-sort";
 import fs from "fs";
 import _ from "lodash";
@@ -48,7 +50,8 @@ export type FoundRefT = {
   location: Location;
   matchText: string;
   isCandidate?: boolean;
-  note?: NoteProps;
+  isFrontmatterTag?: boolean;
+  note: NotePropsMeta;
 };
 
 const markdownExtRegex = /\.md$/i;
@@ -461,7 +464,7 @@ export const noteLinks2Locations = (note: NoteProps) => {
     wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
   });
   const fileContent = fs.readFileSync(fsPath).toString();
-  const fmOffset = fileContent.indexOf("\n---") + 4;
+  const fmOffset = getFrontmatterEndingOffsetPosition(fileContent) ?? 0;
   linksMatch.forEach((link) => {
     const startOffset = link.position?.start.offset || 0;
     const lines = fileContent.slice(0, fmOffset + startOffset).split("\n");
@@ -482,61 +485,70 @@ export const noteLinks2Locations = (note: NoteProps) => {
   return refs;
 };
 
-/**
- *  ^find-references
- * @param fname
- * @param excludePaths
- * @returns
- */
-export const findReferences = async (
-  fname: string,
-  excludePaths: string[] = []
-): Promise<FoundRefT[]> => {
+export async function findReferencesById(opts: {
+  id: string;
+  isLinkCandidateEnabled?: boolean;
+}) {
+  const { id, isLinkCandidateEnabled } = opts;
   const refs: FoundRefT[] = [];
 
   const engine = ExtensionProvider.getEngine();
-  // clean for anchor
-  const notes = NoteUtils.getNotesByFnameFromEngine({
-    fname,
-    engine,
-  });
 
-  const notesWithRefs = await Promise.all(
-    notes.flatMap((note) => {
-      return NoteUtils.getNotesWithLinkTo({
-        note,
-        notes: engine.notes,
-      });
-    })
-  );
+  const note = (await engine.getNoteMeta(id)).data;
 
-  _.forEach(notesWithRefs, (note) => {
-    const linksMatch = note.links.filter(
-      (l) => l.to?.fname?.toLowerCase() === fname.toLowerCase()
+  if (!note) {
+    return;
+  }
+
+  let notesWithRefs;
+  if (isLinkCandidateEnabled) {
+    const engineNotes = await engine.findNotesMeta({ excludeStub: true });
+    notesWithRefs = NoteUtils.getNotesWithLinkTo({
+      note,
+      notes: engineNotes,
+    });
+  } else {
+    const notesRefIds = _.uniq(
+      note.links
+        .filter((link) => link.type === "backlink")
+        .map((link) => link.from.id)
+        .filter(isNotUndefined)
+    );
+
+    notesWithRefs = (await engine.bulkGetNotesMeta(notesRefIds)).data;
+  }
+
+  _.forEach(notesWithRefs, (noteWithRef) => {
+    const linksMatch = noteWithRef.links.filter(
+      (l) => l.to?.fname?.toLowerCase() === note.fname.toLowerCase()
     );
     const fsPath = NoteUtils.getFullPath({
-      note,
+      note: noteWithRef,
       wsRoot: ExtensionProvider.getDWorkspace().wsRoot,
     });
 
-    if (excludePaths.includes(fsPath) || !fs.existsSync(fsPath)) {
+    if (!fs.existsSync(fsPath)) {
       return;
     }
     const fileContent = fs.readFileSync(fsPath).toString();
-    // we are assuming there won't be a `\n---\n` key inside the frontmatter
-    const fmOffset = fileContent.indexOf("\n---") + 4;
+    const fmOffset = getFrontmatterEndingOffsetPosition(fileContent) ?? 0;
+
     linksMatch.forEach((link) => {
-      const endOffset = link.position?.end.offset || 0;
-      const lines = fileContent.slice(0, fmOffset + endOffset + 1).split("\n");
+      const endOffset = link.position?.end.offset;
+
+      let lines;
+      if (endOffset) {
+        lines = fileContent.slice(0, fmOffset + endOffset + 1).split("\n");
+      } else {
+        const fmLine =
+          getOneIndexedFrontmatterEndingLineNumber(fileContent) || 0;
+        const allLines = fileContent.split("\n");
+        const index = link.position?.end.line ?? allLines.length;
+        lines = allLines.slice(0, index + fmLine);
+      }
       const lineNum = lines.length;
       let range: vscode.Range;
       switch (link.type) {
-        case "wiki":
-          range = new vscode.Range(
-            new vscode.Position(lineNum - 1, 0),
-            new vscode.Position(lineNum, 0)
-          );
-          break;
         case "frontmatterTag":
           // -2 in lineNum so that it targets the end of the frontmatter
           range = new vscode.Range(
@@ -566,10 +578,12 @@ export const findReferences = async (
       const foundRef: FoundRefT = {
         location,
         matchText: lines.slice(-1)[0],
-        note,
+        note: noteWithRef,
       };
       if (link.type === "linkCandidate") {
         foundRef.isCandidate = true;
+      } else if (link.type === "frontmatterTag") {
+        foundRef.isFrontmatterTag = true;
       }
 
       refs.push(foundRef);
@@ -577,6 +591,27 @@ export const findReferences = async (
   });
 
   return refs;
+}
+
+/**
+ *  ^find-references
+ * @param fname
+ * @param excludePaths
+ * @returns
+ */
+export const findReferences = async (fname: string): Promise<FoundRefT[]> => {
+  const engine = ExtensionProvider.getEngine();
+  // clean for anchor
+  const notes = await engine.findNotesMeta({ fname });
+
+  const all = Promise.all(
+    notes.map((noteProps) => findReferencesById({ id: noteProps.id }))
+  );
+
+  return all.then((results) => {
+    const arrays = _.compact(results);
+    return _.concat(...arrays);
+  });
 };
 
 export const containsMarkdownExt = (pathParam: string): boolean =>
@@ -615,3 +650,77 @@ export const fsPathToRef = ({
 
 export const containsImageExt = (pathParam: string): boolean =>
   !!imageExtsRegex.exec(path.parse(pathParam).ext);
+
+/**
+ * This returns the offset of the first character AFTER the ending frontmatter
+ *  --- line. This function assumes there won't be a `\n---\n` key inside the
+ *  frontmatter. Offset is 0 indexed.
+ * @param input
+ * @returns
+ */
+function getFrontmatterEndingOffsetPosition(input: string): number | undefined {
+  const frontMatterEndingStringPattern = "\n---";
+  const offset = input.indexOf(frontMatterEndingStringPattern);
+
+  if (offset < 0) {
+    return undefined;
+  }
+
+  return offset + frontMatterEndingStringPattern.length;
+}
+
+/**
+ * This returns the line number of the '---' that concludes the frontmatter
+ * section of a note. The line numbers are 1 indexed in the document. If the
+ * frontmatter ending marker is not found, this returns undefined.
+ * @param input
+ * @returns
+ */
+export function getOneIndexedFrontmatterEndingLineNumber(
+  input: string
+): number | undefined {
+  const offset = getFrontmatterEndingOffsetPosition(input);
+
+  if (!offset) {
+    return undefined;
+  }
+
+  return _.countBy(input.slice(0, offset))["\n"] + 1;
+}
+
+/**
+ * Given a {@link FoundRefT} and a list of anchor names,
+ * check if ref contains an anchor name to update.
+ * @param ref
+ * @param anchorNamesToUpdate
+ * @returns
+ */
+export function hasAnchorsToUpdate(
+  ref: FoundRefT,
+  anchorNamesToUpdate: string[]
+) {
+  const matchText = ref.matchText;
+  const wikiLinkRegEx = /\[\[(?<text>.+?)\]\]/;
+
+  const wikiLinkMatch = wikiLinkRegEx.exec(matchText);
+
+  if (wikiLinkMatch && wikiLinkMatch.groups?.text) {
+    let processed = wikiLinkMatch.groups.text;
+    if (processed.includes("|")) {
+      const [_alias, link] = processed.split("|");
+      processed = link;
+    }
+
+    if (processed.includes("#")) {
+      const [_fname, anchor] = processed.split("#");
+      if (anchor.startsWith("^")) {
+        return anchorNamesToUpdate.includes(anchor.substring(1));
+      }
+      return anchorNamesToUpdate.includes(anchor);
+    } else {
+      return false;
+    }
+  } else {
+    return false;
+  }
+}

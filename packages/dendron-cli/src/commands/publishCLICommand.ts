@@ -2,7 +2,7 @@ import {
   assertUnreachable,
   ConfigUtils,
   DendronError,
-  DendronSiteConfig,
+  DendronPublishingConfig,
   error2PlainObject,
   getStage,
   Stage,
@@ -26,7 +26,7 @@ import { SetupEngineCLIOpts } from "./utils";
 import prompts from "prompts";
 import fs from "fs-extra";
 import ora from "ora";
-import { GitUtils } from "@dendronhq/common-server";
+import { DConfig, GitUtils } from "@dendronhq/common-server";
 
 type CommandCLIOpts = {
   cmd: PublishCommands;
@@ -91,7 +91,7 @@ const isBuildOverrideKey = (key: string): key is keyof BuildOverrides => {
   const allowedKeys = [
     "siteUrl",
     "assetsPrefix",
-  ] as (keyof DendronSiteConfig)[];
+  ] as (keyof DendronPublishingConfig)[];
   return allowedKeys.includes(key as any);
 };
 
@@ -129,6 +129,18 @@ export class PublishCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     args.option("overrides", {
       describe: "override existing siteConfig properties",
       type: "string",
+    });
+    args.option("target", {
+      describe: "export to specific destination",
+      choices: _.values(PublishTarget),
+    });
+    args.option("yes", {
+      describe: "automatically say yes to all prompts",
+      type: "boolean",
+    });
+    args.option("sitemap", {
+      describe: "generates a sitemap: https://en.wikipedia.org/wiki/Site_map",
+      type: "boolean",
     });
   }
 
@@ -253,12 +265,12 @@ export class PublishCLICommand extends CLICommand<CommandOpts, CommandOutput> {
     opts.config.overrides = overrides || {};
 
     // if no siteUrl set, override with localhost
-    const config = opts.engine.config;
-    const publishingConfig = ConfigUtils.getPublishingConfig(config);
+    const config = DConfig.readConfigSync(opts.engine.wsRoot);
+    const publishingConfig = ConfigUtils.getPublishing(config);
     if (stage !== "prod") {
       if (!publishingConfig.siteUrl && !overrides?.siteUrl) {
         _.set(
-          opts.config.overrides as Partial<DendronSiteConfig>,
+          opts.config.overrides as Partial<DendronPublishingConfig>,
           "siteUrl",
           "localhost:3000"
         );

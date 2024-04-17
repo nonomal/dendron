@@ -1,39 +1,37 @@
+import { Server } from "@dendronhq/api-server";
 import {
-  CleanDendronSiteConfig,
+  ConfigUtils,
   CONSTANTS,
-  IntermediateDendronConfig,
   DEngineClient,
   DVault,
   DWorkspace,
+  DendronConfig,
   WorkspaceFolderRaw,
   WorkspaceOpts,
   WorkspaceSettings,
-  ConfigUtils,
-  NoteUtils,
+  CleanDendronPublishingConfig,
+  genDefaultPublishingConfig,
 } from "@dendronhq/common-all";
 import {
+  DConfig,
   getDurationMilliseconds,
   tmpDir,
   vault2Path,
 } from "@dendronhq/common-server";
 import {
-  GenTestResults,
   NoteTestUtilsV4,
-  PostSetupHookFunction,
-  PreSetupHookFunction,
   RunEngineTestFunctionOpts,
   RunEngineTestFunctionV4,
   runJestHarnessV2,
   SetupHookFunction,
-  SetupTestFunctionV4,
   TestResult,
 } from "@dendronhq/common-test-utils";
 import { LaunchEngineServerCommand } from "@dendronhq/dendron-cli";
 import {
   createEngine as engineServerCreateEngine,
-  DConfig,
-  WorkspaceService,
+  createEngineV3,
   WorkspaceConfig,
+  WorkspaceService,
 } from "@dendronhq/engine-server";
 import fs from "fs-extra";
 import _ from "lodash";
@@ -43,9 +41,7 @@ import sinon, { SinonStub } from "sinon";
 import { ENGINE_HOOKS } from "./presets";
 import { GitTestUtils } from "./utils";
 
-export type ModConfigCb = (
-  config: IntermediateDendronConfig
-) => IntermediateDendronConfig;
+export type ModConfigCb = (config: DendronConfig) => DendronConfig;
 
 export type TestSetupWorkspaceOpts = {
   /**
@@ -70,7 +66,7 @@ export type TestSetupWorkspaceOpts = {
 
 export type AsyncCreateEngineFunction = (
   opts: WorkspaceOpts
-) => Promise<{ engine: DEngineClient; port?: number }>;
+) => Promise<{ engine: DEngineClient; port?: number; server?: Server }>;
 
 /**
  * Create an {@link DendronEngine}
@@ -79,6 +75,18 @@ export async function createEngineFromEngine(opts: WorkspaceOpts) {
   return {
     engine: engineServerCreateEngine(opts) as DEngineClient,
     port: undefined,
+    server: undefined,
+  };
+}
+
+/**
+ * Create an {@link DendronEngine}
+ */
+export async function createEngineV3FromEngine(opts: WorkspaceOpts) {
+  return {
+    engine: createEngineV3(opts) as DEngineClient,
+    port: undefined,
+    server: undefined,
   };
 }
 
@@ -104,9 +112,8 @@ export async function createServer(opts: WorkspaceOpts & { port?: number }) {
 export async function createEngineFromServer(
   opts: WorkspaceOpts
 ): Promise<any> {
-  const { engine, port } = await createServer(opts);
-  await engine.init();
-  return { engine, port };
+  const { engine, port, server } = await createServer(opts);
+  return { engine, port, server };
 }
 
 export async function createEngineByConnectingToDebugServer(
@@ -114,19 +121,21 @@ export async function createEngineByConnectingToDebugServer(
 ): Promise<any> {
   // debug port used by launch:engine-server:debug
   const port = 3005;
-  const { engine } = await createServer({ ...opts, port });
-  await engine.init();
-  return { engine, port };
+  const { engine, server } = await createServer({ ...opts, port });
+  return { engine, port, server };
 }
 
-export function createSiteConfig(
-  opts: Partial<CleanDendronSiteConfig> &
-    Required<Pick<CleanDendronSiteConfig, "siteRootDir" | "siteHierarchies">>
-): CleanDendronSiteConfig {
+export function createPublishingConfig(
+  opts: Partial<CleanDendronPublishingConfig> &
+    Required<
+      Pick<CleanDendronPublishingConfig, "siteRootDir" | "siteHierarchies">
+    >
+): CleanDendronPublishingConfig {
+  const defaultPublishingConfig = genDefaultPublishingConfig();
   const copts = {
-    siteNotesDir: "docs",
-    siteUrl: "https://localhost:8080",
+    ...defaultPublishingConfig,
     ...opts,
+    siteUrl: "https://localhost:8080",
   };
   return {
     ...copts,
@@ -152,7 +161,6 @@ export async function setupWS(opts: {
   ws.createConfig();
   // create dendron.code-workspace
   WorkspaceConfig.write(wsRoot, opts.vaults);
-
   let config = ws.config;
   let vaults = await Promise.all(
     opts.vaults.map(async (vault) => {
@@ -163,7 +171,7 @@ export async function setupWS(opts: {
   const vaultsConfig = ConfigUtils.getVaults(config);
   const sortedVaultsConfig = _.sortBy(vaultsConfig, "fsPath");
   ConfigUtils.setVaults(config, sortedVaultsConfig);
-  const publishingConfig = ConfigUtils.getPublishingConfig(config);
+  const publishingConfig = ConfigUtils.getPublishing(config);
   if (publishingConfig.duplicateNoteBehavior) {
     const sortedPayload = (
       publishingConfig.duplicateNoteBehavior.payload as string[]
@@ -181,7 +189,7 @@ export async function setupWS(opts: {
         await resp;
         await WorkspaceService.createWorkspace({
           wsRoot: path.join(wsRoot, ent.name),
-          vaults: ent.vaults,
+          additionalVaults: ent.vaults,
         });
         return ws.addWorkspace({ workspace: ent });
       },
@@ -219,55 +227,6 @@ export type RunEngineTestFunctionV5<T = any> = (
   }
 ) => Promise<TestResult[] | void | T>;
 
-export class TestPresetEntryV5 {
-  public preSetupHook: PreSetupHookFunction;
-  public postSetupHook: PostSetupHookFunction;
-  public testFunc: RunEngineTestFunctionV4;
-  public extraOpts: any;
-  public setupTest?: SetupTestFunctionV4;
-  public genTestResults?: GenTestResults;
-  public vaults: DVault[];
-  public workspaces: DWorkspace[];
-
-  constructor(
-    func: RunEngineTestFunctionV5,
-    opts?: {
-      preSetupHook?: PreSetupHookFunction;
-      postSetupHook?: PostSetupHookFunction;
-      extraOpts?: any;
-      setupTest?: SetupTestFunctionV4;
-      genTestResults?: GenTestResults;
-      vaults?: DVault[];
-    }
-  ) {
-    const {
-      preSetupHook,
-      postSetupHook,
-      extraOpts,
-      setupTest,
-      genTestResults,
-      workspaces,
-    } = _.defaults(opts, {
-      workspaces: [],
-    });
-    this.preSetupHook = preSetupHook || (async () => {});
-    this.postSetupHook = postSetupHook || (async () => {});
-    this.testFunc = _.bind(func, this);
-    this.extraOpts = extraOpts;
-    this.setupTest = setupTest;
-    this.genTestResults = _.bind(genTestResults || (async () => []), this);
-    this.workspaces = workspaces;
-    this.vaults = opts?.vaults || [
-      { fsPath: "vault1" },
-      { fsPath: "vault2" },
-      {
-        name: "vaultThree",
-        fsPath: "vault3",
-      },
-    ];
-  }
-}
-
 /**
  *
  * To create empty workspace, initilizae with `vaults = []`
@@ -294,7 +253,7 @@ export async function runEngineTestV5(
   } = _.defaults(opts, {
     preSetupHook: async () => {},
     postSetupHook: async () => {},
-    createEngine: createEngineFromEngine,
+    createEngine: createEngineV3FromEngine,
     extra: {},
     // third vault has diff name
     vaults: [
@@ -306,8 +265,10 @@ export async function runEngineTestV5(
   });
 
   let homeDirStub: sinon.SinonStub | undefined;
+  let server: Server | undefined;
 
   try {
+    // --- begin ws setup
     // make sure tests don't overwrite local homedir contents
     homeDirStub = TestEngineUtils.mockHomeDir();
     const { wsRoot, vaults } = await setupWS({
@@ -319,11 +280,6 @@ export async function runEngineTestV5(
     if ((opts.initHooks, vaults)) {
       fs.ensureDirSync(path.join(wsRoot, CONSTANTS.DENDRON_HOOKS_BASE));
     }
-    await preSetupHook({ wsRoot, vaults });
-    const resp = await createEngine({ wsRoot, vaults });
-    const engine = resp.engine;
-    const start = process.hrtime();
-    const initResp = await engine.init();
     if (addVSWorkspace) {
       fs.writeJSONSync(
         path.join(wsRoot, CONSTANTS.DENDRON_WS_NAME),
@@ -338,6 +294,14 @@ export async function runEngineTestV5(
         { spaces: 4 }
       );
     }
+
+    // --- begin engine setup
+    await preSetupHook({ wsRoot, vaults });
+    const resp = await createEngine({ wsRoot, vaults });
+    const engine = resp.engine;
+    server = resp.server;
+    const start = process.hrtime();
+    const initResp = await engine.init();
     const engineInitDuration = getDurationMilliseconds(start);
     const testOpts = {
       wsRoot,
@@ -370,6 +334,9 @@ export async function runEngineTestV5(
     // restore sinon so other tests can keep running
     if (homeDirStub) {
       homeDirStub.restore();
+    }
+    if (server) {
+      server.close();
     }
   }
 }
@@ -432,14 +399,5 @@ export class TestEngineUtils {
   } & WorkspaceOpts) {
     const vault = vaults[0];
     return NoteTestUtilsV4.createNote({ wsRoot, vault, fname, body, custom });
-  }
-
-  /**
-   * Sugar for retrieving a note in the first vault
-   */
-  static getNoteByFname(engine: DEngineClient, fname: string) {
-    const { wsRoot, vaults, notes } = engine;
-    const vault = vaults[0];
-    return NoteUtils.getNoteByFnameV5({ fname, notes, vault, wsRoot });
   }
 }

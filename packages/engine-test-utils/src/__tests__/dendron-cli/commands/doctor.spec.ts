@@ -1,10 +1,16 @@
-import { ConfigUtils, VaultUtils, WorkspaceOpts } from "@dendronhq/common-all";
-import { file2Note, tmpDir } from "@dendronhq/common-server";
+import {
+  ConfigUtils,
+  ErrorUtils,
+  VaultUtils,
+  WorkspaceOpts,
+} from "@dendronhq/common-all";
 import {
   BackupService,
   DConfig,
-  DoctorActionsEnum,
-} from "@dendronhq/engine-server";
+  file2Note,
+  tmpDir,
+} from "@dendronhq/common-server";
+import { DoctorActionsEnum } from "@dendronhq/engine-server";
 import { AssertUtils, NoteTestUtilsV4 } from "@dendronhq/common-test-utils";
 import { DoctorCLICommand, DoctorCLICommandOpts } from "@dendronhq/dendron-cli";
 import path from "path";
@@ -96,6 +102,15 @@ const setupWithAliasedWikilink = async (opts: WorkspaceOpts) => {
   });
 };
 
+const setupWithInvalidFilename = async (opts: WorkspaceOpts) => {
+  const { wsRoot, vaults } = opts;
+  await NoteTestUtilsV4.createNote({
+    wsRoot,
+    vault: vaults[0],
+    fname: "bar..('foo',)",
+  });
+};
+
 const setupWithXVaultWikilink = async (opts: WorkspaceOpts) => {
   const { wsRoot, vaults } = opts;
   await NoteTestUtilsV4.createNote({
@@ -150,7 +165,11 @@ describe("h1 to h2", () => {
               vault.fsPath,
               `${nm.toLowerCase()}.md`
             );
-            const note = file2Note(fpath, vault);
+            const resp = file2Note(fpath, vault);
+            if (ErrorUtils.isErrorResp(resp)) {
+              throw resp.error;
+            }
+            const note = resp.data;
             expect(note).toMatchSnapshot();
             expect(
               await AssertUtils.assertInString({
@@ -173,12 +192,12 @@ describe("h1 to h2", () => {
     await runEngineTestV5(
       async ({ engine, wsRoot, vaults }) => {
         const vault = vaults[0];
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -187,7 +206,11 @@ describe("h1 to h2", () => {
         });
 
         const fpathFoo = path.join(wsRoot, vault.fsPath, "foo.md");
-        const noteFoo = file2Note(fpathFoo, vault);
+        const resp1 = file2Note(fpathFoo, vault);
+        if (ErrorUtils.isErrorResp(resp1)) {
+          throw resp1.error;
+        }
+        const noteFoo = resp1.data;
         expect(noteFoo).toMatchSnapshot();
         expect(
           await AssertUtils.assertInString({
@@ -198,7 +221,11 @@ describe("h1 to h2", () => {
 
         // bar.md should be untouched.
         const fpathBar = path.join(wsRoot, vault.fsPath, "bar.md");
-        const note = file2Note(fpathBar, vault);
+        const resp2 = file2Note(fpathBar, vault);
+        if (ErrorUtils.isErrorResp(resp2)) {
+          throw resp2.error;
+        }
+        const note = resp2.data;
         expect(note).toMatchSnapshot();
         expect(
           await AssertUtils.assertInString({
@@ -233,7 +260,11 @@ describe("h1 to h2", () => {
               vault.fsPath,
               `${nm.toLowerCase()}.md`
             );
-            const note = file2Note(fpath, vault);
+            const resp = file2Note(fpath, vault);
+            if (ErrorUtils.isErrorResp(resp)) {
+              throw resp.error;
+            }
+            const note = resp.data;
             expect(note).toMatchSnapshot();
             expect(
               await AssertUtils.assertInString({
@@ -272,7 +303,11 @@ describe("H1_TO_TITLE", () => {
               vault.fsPath,
               `${nm.toLowerCase()}.md`
             );
-            const note = file2Note(fpath, vault);
+            const resp = file2Note(fpath, vault);
+            if (ErrorUtils.isErrorResp(resp)) {
+              throw resp.error;
+            }
+            const note = resp.data;
             expect(note).toMatchSnapshot();
             expect(note.title).toEqual(`${nm} Header`);
           })
@@ -290,12 +325,12 @@ describe("H1_TO_TITLE", () => {
     await runEngineTestV5(
       async ({ engine, wsRoot, vaults }) => {
         const vault = vaults[0];
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -303,12 +338,20 @@ describe("H1_TO_TITLE", () => {
           action,
         });
         const fpathFoo = path.join(wsRoot, vault.fsPath, "foo.md");
-        const noteFoo = file2Note(fpathFoo, vault);
+        const resp1 = file2Note(fpathFoo, vault);
+        if (ErrorUtils.isErrorResp(resp1)) {
+          throw resp1.error;
+        }
+        const noteFoo = resp1.data;
         expect(noteFoo).toMatchSnapshot();
         expect(noteFoo.title).toEqual("Foo Header");
 
         const fpathBar = path.join(wsRoot, vault.fsPath, "bar.md");
-        const noteBar = file2Note(fpathBar, vault);
+        const resp2 = file2Note(fpathBar, vault);
+        if (ErrorUtils.isErrorResp(resp2)) {
+          throw resp2.error;
+        }
+        const noteBar = resp2.data;
         expect(noteBar).toMatchSnapshot();
         expect(noteBar.title).toEqual("Bar");
       },
@@ -377,12 +420,12 @@ describe("CREATE_MISSING_LINKED_NOTES", () => {
     await runEngineTestV5(
       async ({ engine, wsRoot, vaults }) => {
         const vault = vaults[0];
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -429,12 +472,12 @@ describe("CREATE_MISSING_LINKED_NOTES", () => {
     await runEngineTestV5(
       async ({ engine, wsRoot, vaults }) => {
         const vault = vaults[0];
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -484,12 +527,12 @@ describe("CREATE_MISSING_LINKED_NOTES", () => {
     await runEngineTestV5(
       async ({ engine, wsRoot, vaults }) => {
         const vault = vaults[0];
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -585,12 +628,12 @@ describe("CREATE_MISSING_LINKED_NOTES", () => {
             "[[qaaaz note|dendron://vault2/qaaaz2]]",
           ].join("\n"),
         });
-        const resp = await engine.getNoteByPath({
-          npath: "foo",
-          createIfNew: false,
-          vault: vault1,
-        });
-        const fooFile = resp.data!.note;
+        const fooFile = (
+          await engine.findNotes({
+            fname: "foo",
+            vault: vault1,
+          })
+        )[0];
         await runDoctor({
           candidates: [fooFile!],
           wsRoot,
@@ -848,7 +891,7 @@ describe("GIVEN addMissingDefaultConfigs", () => {
   });
 
   describe("WHEN not missing a default key", () => {
-    test("THEN doesn't add missing default", async () => {
+    test("THEN doesn't add missing default and backup is not created", async () => {
       await runEngineTestV5(
         async ({ wsRoot, engine }) => {
           const rawConfigBefore = DConfig.getRaw(wsRoot);
@@ -875,6 +918,94 @@ describe("GIVEN addMissingDefaultConfigs", () => {
           }
         },
         {
+          expect,
+        }
+      );
+    });
+  });
+});
+
+describe("GIVEN removeDeprecatedConfigs", () => {
+  const action = DoctorActionsEnum.REMOVE_DEPRECATED_CONFIGS;
+  describe("WHEN deprecated key exists", () => {
+    test("THEN removes deprecated key and create backup", async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, engine }) => {
+          const rawConfigBefore = DConfig.getRaw(wsRoot);
+          expect((rawConfigBefore.dev as any).enableWebUI).toBeTruthy();
+          const out = await runDoctor({
+            wsRoot,
+            engine,
+            action,
+          });
+          expect(out.resp.backupPath).toBeTruthy();
+          const backupPathExists = await fs.pathExists(out.resp.backupPath);
+          expect(backupPathExists).toBeTruthy();
+          const rawConfigAfter = DConfig.getRaw(wsRoot);
+          expect(_.has(rawConfigAfter.dev, "enableWebUI")).toBeFalsy();
+        },
+        {
+          expect,
+          modConfigCb: (config) => {
+            // @ts-ignore
+            config.dev = { enableWebUI: true };
+            return config;
+          },
+        }
+      );
+    });
+  });
+
+  describe("WHEN deprecated config doesn't exist", () => {
+    test("THEN config doesn't change and backup is not created.", async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, engine }) => {
+          const rawConfigBefore = DConfig.getRaw(wsRoot);
+          expect(_.has(rawConfigBefore.dev, "enableWebUI")).toBeFalsy();
+          const out = await runDoctor({
+            wsRoot,
+            engine,
+            action,
+          });
+          expect(out).toEqual({ exit: true });
+          const rawConfig = DConfig.getRaw(wsRoot);
+          expect(rawConfigBefore).toEqual(rawConfig);
+
+          const backupService = new BackupService({ wsRoot });
+          try {
+            const configBackups = backupService.getBackupsWithKey({
+              key: "config",
+            });
+            expect(configBackups.length).toEqual(0);
+          } finally {
+            backupService.dispose();
+          }
+        },
+        {
+          expect,
+        }
+      );
+    });
+  });
+});
+
+describe("GIVEN fixInvalidFilenames", () => {
+  const action = DoctorActionsEnum.FIX_INVALID_FILENAMES;
+  describe("WHEN workspace with note that has invalid filename", () => {
+    test("THEN invalid file name is automatically fixed", async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, engine }) => {
+          await runDoctor({
+            wsRoot,
+            engine,
+            action,
+          });
+          const getNoteResp = await engine.getNote("bar..('foo',)");
+          expect(getNoteResp.data).toBeTruthy();
+          expect(getNoteResp.data?.fname).toEqual("bar.foo");
+        },
+        {
+          preSetupHook: setupWithInvalidFilename,
           expect,
         }
       );

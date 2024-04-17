@@ -1,6 +1,6 @@
 import fs from "fs-extra";
 import _ from "lodash";
-import { DLink, NoteProps, NoteUtils } from "@dendronhq/common-all";
+import { DLink, NoteDictsUtils, NoteProps } from "@dendronhq/common-all";
 import path from "path";
 import { ExportPod, ExportPodPlantOpts, ExportPodConfig } from "../basev3";
 import { JSONSchemaType } from "ajv";
@@ -64,7 +64,6 @@ export class GraphvizExportPod extends ExportPod<GraphvizExportConfig> {
       notes,
       connections,
       parentDictionary,
-      wsRoot,
       showGraphByHierarchy,
       showGraphByEdges,
     } = opts;
@@ -92,16 +91,17 @@ export class GraphvizExportPod extends ExportPod<GraphvizExportConfig> {
       (child: string) => (parentDictionary[child] = note.id)
     );
 
+    const noteDicts = NoteDictsUtils.createNoteDicts(notes);
     // Note -> Linked Notes connections
     if (showGraphByEdges) {
       note.links.forEach((link: DLink) => {
         if (link.to) {
-          const destinationNote = NoteUtils.getNoteByFnameV5({
-            fname: link.to!.fname as string,
-            vault: note.vault,
-            notes: notes,
-            wsRoot,
-          });
+          const destinationNote: NoteProps | undefined =
+            NoteDictsUtils.findByFname({
+              fname: link.to!.fname as string,
+              noteDicts,
+              vault: note.vault,
+            })[0];
 
           if (!_.isUndefined(destinationNote)) {
             if (

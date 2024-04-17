@@ -2,7 +2,7 @@
 id: 73eb67ea-0291-45e7-8f2f-193fd6f00643
 title: Links
 desc: ""
-updated: 1645254233145
+updated: 1651563961085
 created: 1608518909864
 ---
 
@@ -52,6 +52,8 @@ Vault2
 ### Header
 
 ![[dendron.welcome#header1]]
+
+If the header is capitalized that also should work since they are case insensitive: ![[dendron.welcome#Header1]]
 
 ### With Special Characters
 
@@ -152,6 +154,8 @@ const x = 1;
 [[/vault/root.schema.yml]]
 
 And a link to line 6 in that file: [[/vault/root.schema.yml#L6]]
+
+And to an asset file: [[/assets/images/logo.png]]
 
 ## Link to a file outside any vault
 

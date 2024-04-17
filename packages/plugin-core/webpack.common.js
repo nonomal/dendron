@@ -15,6 +15,8 @@ const config = {
   output: {
     path: path.resolve(__dirname, "dist"),
     filename: "[name].js",
+    // commonjs2 is like commonjs but also includes the module.exports
+    // see https://github.com/webpack/webpack/issues/1114
     libraryTarget: "commonjs2",
     devtoolModuleFilenameTemplate: "../[resource-path]",
   },
@@ -27,7 +29,11 @@ const config = {
       vscode: "commonjs vscode", // the vscode-module is created on-the-fly and must be excluded
       "pino-pretty": "pino-pretty",
     },
+    // see [[../packages/plugin-core/webpack-require-hack.js]] for more details
     /\.\/webpack-require-hack/,
+    /\.\/prisma-shim/,
+    /\.\/adm-zip/,
+    /\.\/sqlite3-binding/,
   ],
   resolve: {
     extensions: [".tsx", ".ts", ".js"],
@@ -36,10 +42,10 @@ const config = {
     new CopyPlugin({
       patterns: [{ from: path.join("assets", "static"), to: "static" }],
     }),
-    // @ts-ignore
     new CopyPlugin({
       patterns: [{ from: path.join("assets", "dendron-ws"), to: "dendron-ws" }],
     }),
+    // used for dendron.yml validation at runtime
     new CopyPlugin({
       patterns: [
         {
@@ -53,10 +59,15 @@ const config = {
         },
       ],
     }),
-    // @ts-ignore
     new CopyPlugin({
       patterns: [
         { from: "webpack-require-hack.js", to: "webpack-require-hack.js" },
+        { from: "sqlite3-binding.js", to: "sqlite3-binding.js" },
+        {
+          from: path.join("lib", "binding", "*", "node_sqlite3.node"),
+          to: "node_sqlite3.node",
+          noErrorOnMissing: true,
+        },
       ],
     }),
     ...(process.env.SKIP_SENTRY
@@ -85,6 +96,8 @@ const config = {
             ignore: ["node_modules", "webpack.*.js"],
           }),
         ]),
+    // bundle analysis only done when enabled
+    // see [[dendron://dendron.dendron-site/dendron.topic.dev.cli.package-plugin]] for usage
     ...(process.env.ANALYZE_BUNDLE
       ? [
           new BundleAnalyzerPlugin({
@@ -119,6 +132,7 @@ const config = {
         test: /\.mjs$/,
         type: "javascript/auto",
       },
+      // don't handle the following files - causes errors
       { test: /\.node$/, loader: "ignore-loader" },
       { test: /\.d\.ts$/, loader: "ignore-loader" },
       { test: /\.js\.map$/, loader: "ignore-loader" },

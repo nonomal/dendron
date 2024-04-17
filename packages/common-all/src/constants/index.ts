@@ -27,6 +27,7 @@ export const CONSTANTS = {
   DENDRON_SERVER_PORT: ".dendron.port",
   DENDRON_WS_META: ".dendron.ws",
   DENDRON_CONFIG_FILE: "dendron.yml",
+  DENDRON_LOCAL_CONFIG_FILE: "dendronrc.yml",
   DENDRON_SEED_CONFIG: "seed.yml",
   DENDRON_DELIMETER: "dendron://",
   DENDRON_USER_FILE: ".dendron.user",
@@ -43,6 +44,8 @@ export const CONSTANTS = {
   DENDRON_INIT_VERSION: "0.0.0",
   /** Default for the `maxNoteLength` config. */
   DENDRON_DEFAULT_MAX_NOTE_LENGTH: 204800,
+  /** The file containing the custom theme CSS. Located at the workspace root. */
+  CUSTOM_THEME_CSS: "custom.css",
 };
 
 export const FOLDERS = {
@@ -54,6 +57,10 @@ export const FOLDERS = {
   NOTES: "notes",
   /** The folder where the assets are stored, this will be under {@link FOLDERS.NOTES}. */
   ASSETS: "assets",
+  /** The system-wide folder where Dendron stores metadata and other system-wide files. */
+  DENDRON_SYSTEM_ROOT: ".dendron",
+  /** The folder where telemetry payloads that will be sent during next run are temporarily saved. Under {@link FOLDERS.DENDRON_SYSTEM_ROOT}. */
+  SAVED_TELEMETRY: "saved-telemetry",
 };
 
 export enum ERROR_STATUS {
@@ -78,6 +85,12 @@ export enum ERROR_STATUS {
   INVALID_STATE = "invalid_state",
   // --- 500
   UNKNOWN = "unknown",
+
+  // storage layer errors
+  CONTENT_NOT_FOUND = "content_not_found",
+  WRITE_FAILED = "write_failed",
+  DELETE_FAILED = "delete_failed",
+  RENAME_FAILED = "rename_failed",
 }
 
 export enum USER_MESSAGES {
@@ -115,4 +128,12 @@ export enum DENDRON_EMOJIS {
 
 export enum DENDRON_VSCODE_CONFIG_KEYS {
   ENABLE_SELF_CONTAINED_VAULTS_WORKSPACE = "dendron.enableSelfContainedVaultWorkspace",
+}
+
+/**
+ * Keys to a global state store. Global here means across a single user's
+ * different access platforms.
+ */
+export enum GLOBAL_STATE_KEYS {
+  ANONYMOUS_ID = "telemetry.anonymousId",
 }

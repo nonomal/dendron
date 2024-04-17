@@ -61,7 +61,14 @@ export class VSCodeUtils {
   }
 
   static closeAllEditors() {
-    return vscode.commands.executeCommand("workbench.action.closeAllEditors");
+    const closeEditorsCmd = vscode.commands.executeCommand(
+      "workbench.action.closeAllEditors"
+    );
+    const closeGroupsCmd = vscode.commands.executeCommand(
+      "workbench.action.closeAllGroups"
+    );
+
+    return Promise.all([closeEditorsCmd, closeGroupsCmd]);
   }
 
   static createCancelSource(existingSource?: CancellationTokenSource) {
@@ -188,25 +195,6 @@ export class VSCodeUtils {
     const selection = editor.selection;
     const text = editor.document.getText(selection);
     return { text, selection, editor };
-  }
-
-  static createWSContext(): vscode.ExtensionContext {
-    const pkgRoot = goUpTo({ base: __dirname, fname: "package.json" });
-    return {
-      extensionMode: vscode.ExtensionMode.Development,
-      logPath: tmpDir().name,
-      subscriptions: [] as any[],
-      extensionPath: pkgRoot,
-      globalState: VSCodeUtils.createMockState({
-        [GLOBAL_STATE.VERSION]: "0.0.1",
-      }),
-      workspaceState: VSCodeUtils.createMockState({}),
-      extensionUri: vscode.Uri.file(pkgRoot),
-      environmentVariableCollection: {} as any,
-      storagePath: tmpDir().name,
-      globalStoragePath: tmpDir().name,
-      asAbsolutePath: {} as any, //vscode.Uri.file(wsPath)
-    } as unknown as vscode.ExtensionContext;
   }
 
   // create mock context for testing ^7a83pznb91c8

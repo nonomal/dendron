@@ -1,16 +1,17 @@
 import {
   ConfigUtils,
   CONSTANTS,
-  IntermediateDendronConfig,
+  DendronConfig,
   VaultUtils,
   WorkspaceFolderRaw,
   WorkspaceOpts,
   WorkspaceSettings,
   WorkspaceType,
+  normalizeUnixPath,
 } from "@dendronhq/common-all";
-import { readYAML } from "@dendronhq/common-server";
+import { DConfig, readYAML } from "@dendronhq/common-server";
 import { AssertUtils } from "@dendronhq/common-test-utils";
-import { DConfig, WorkspaceUtils } from "@dendronhq/engine-server";
+import { WorkspaceUtils } from "@dendronhq/engine-server";
 import fs from "fs-extra";
 import _ from "lodash";
 import path from "path";
@@ -98,7 +99,7 @@ const getWorkspaceFolders = (wsRoot: string) => {
 export async function checkVaults(opts: WorkspaceOpts, expect: any) {
   const { wsRoot, vaults } = opts;
   const configPath = DConfig.configPath(opts.wsRoot);
-  const config = readYAML(configPath) as IntermediateDendronConfig;
+  const config = readYAML(configPath) as DendronConfig;
   const vaultsConfig = ConfigUtils.getVaults(config);
   expect(_.sortBy(vaultsConfig, ["fsPath", "workspace"])).toEqual(
     _.sortBy(vaults, ["fsPath", "workspace"])
@@ -110,7 +111,9 @@ export async function checkVaults(opts: WorkspaceOpts, expect: any) {
     const wsFolders = getWorkspaceFolders(wsRoot);
     expect(wsFolders).toEqual(
       vaults.map((ent) => {
-        const out: WorkspaceFolderRaw = { path: VaultUtils.getRelPath(ent) };
+        const out: WorkspaceFolderRaw = {
+          path: normalizeUnixPath(VaultUtils.getRelPath(ent)),
+        };
         if (ent.name) {
           out.name = ent.name;
         }

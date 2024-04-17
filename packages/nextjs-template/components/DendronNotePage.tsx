@@ -1,4 +1,6 @@
-import { IntermediateDendronConfig, NoteProps } from "@dendronhq/common-all";
+/* eslint-disable global-require */
+/* eslint-disable import/no-dynamic-require */
+import { ConfigUtils, DendronConfig, NoteProps } from "@dendronhq/common-all";
 import {
   createLogger,
   DendronNote,
@@ -16,6 +18,8 @@ import { useCombinedDispatch } from "../features";
 import { browserEngineSlice } from "../features/engine";
 import { DENDRON_STYLE_CONSTANTS } from "../styles/constants";
 import { useDendronRouter } from "../utils/hooks";
+import { MermaidScript } from "./MermaidScript";
+import { DendronNoteGiscusWidget } from "./DendronNoteGiscusWidget";
 
 const { HEADER } = DENDRON_STYLE_CONSTANTS;
 
@@ -26,8 +30,9 @@ export type DendronNotePageProps = {
   note: NoteProps;
   body: string;
   collectionChildren: NoteProps[] | null;
-  config: IntermediateDendronConfig;
+  config: DendronConfig;
 };
+let BannerAlert: any | undefined;
 
 export default function Note({
   note,
@@ -46,6 +51,15 @@ export default function Note({
   if (id === "root") {
     id = noteIndex.id;
   }
+
+  React.useEffect(() => {
+    const BannerFile =
+      ConfigUtils.getPublishing(config).siteBanner === "custom"
+        ? "BannerAlert.tsx"
+        : "NoOp";
+    logger.info({ ctx: "loading banner", BannerFile });
+    BannerAlert = require(`../custom/${BannerFile}`).default;
+  }, []);
 
   // --- Hooks
   const dispatch = useCombinedDispatch();
@@ -86,21 +100,28 @@ export default function Note({
 
   const maybeCollection =
     note.custom?.has_collection && !_.isNull(collectionChildren)
-      ? collectionChildren.map((child: NoteProps) =>
-          DendronCollectionItem({ note: child, noteIndex })
-        )
+      ? collectionChildren.map((child: NoteProps) => (
+          <DendronCollectionItem
+            key={child.id}
+            note={child}
+            noteIndex={noteIndex}
+          />
+        ))
       : null;
 
   return (
     <>
+      <MermaidScript noteBody={noteBody} />
       <DendronSEO note={note} config={config} />
       {customHeadContent && <DendronCustomHead content={customHeadContent} />}
       <Row>
         <Col span={24}>
           <Row gutter={20}>
             <Col xs={24} md={18}>
-              <DendronNote noteContent={noteBody} config={config} />
+              {BannerAlert && <BannerAlert />}
+              <DendronNote noteContent={noteBody} />
               {maybeCollection}
+              <DendronNoteGiscusWidget note={note} config={config} />
             </Col>
             <Col xs={0} md={6}>
               <DendronTOC note={note} offsetTop={HEADER.HEIGHT} />

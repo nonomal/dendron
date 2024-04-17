@@ -2,22 +2,21 @@ import fs, { Dirent } from "fs-extra";
 import matter from "gray-matter";
 import YAML from "js-yaml";
 import _ from "lodash";
-import minimatch from "minimatch";
 import os from "os";
 import path from "path";
 import {
   cleanName,
   DendronError,
   ERROR_SEVERITY,
+  GetAllFilesOpts,
+  globMatch,
   isNotNull,
   RespV2,
+  fromPromise,
+  AnyJson,
+  fromThrowable,
+  Result,
 } from "@dendronhq/common-all";
-
-export type GetAllFilesOpts = {
-  root: string;
-  include?: string[];
-  exclude?: string[];
-};
 
 /**
  *
@@ -64,9 +63,16 @@ export function readMD(fpath: string): { data: any; content: string } {
   return matter.read(fpath, {});
 }
 
-export function readYAML(fpath: string): any {
+/**
+ *
+ * @param fpath path of yaml file to read
+ * @param overwriteDuplcate if set to true, will not throw duplicate entry exception and use the last entry.
+ * @returns
+ */
+export function readYAML(fpath: string, overwriteDuplicate?: boolean): any {
   return YAML.load(fs.readFileSync(fpath, { encoding: "utf8" }), {
     schema: YAML.JSON_SCHEMA,
+    json: overwriteDuplicate ?? false,
   });
 }
 
@@ -90,13 +96,6 @@ export function deleteFile(fpath: string) {
   return fs.unlinkSync(fpath);
 }
 
-export function globMatch(patterns: string[] | string, fname: string): boolean {
-  if (_.isString(patterns)) {
-    return minimatch(fname, patterns);
-  }
-  return _.some(patterns, (pattern) => minimatch(fname, pattern));
-}
-
 /** Gets all files in `root`, with include and exclude lists (glob matched)
  *
  * This function returns the full `Dirent` which gives you access to file
@@ -113,7 +112,7 @@ export async function getAllFilesWithTypes(
     exclude: [".git", "Icon\r", ".*"],
   });
   try {
-    const allFiles = await fs.readdir(root, { withFileTypes: true });
+    const allFiles = await fs.readdir(root.fsPath, { withFileTypes: true });
     return {
       data: allFiles
         .map((dirent) => {
@@ -214,4 +213,26 @@ export function removeMDExtension(nodePath: string) {
     nodePath = nodePath.slice(0, idx);
   }
   return nodePath;
+}
+
+const readFileSync = fromThrowable(fs.readFileSync, (error) => {
+  return new DendronError({
+    message: `Cannot find ${path}`,
+    severity: ERROR_SEVERITY.FATAL,
+    ...(error instanceof Error && { innerError: error }),
+  });
+});
+
+export function readString(path: string) {
+  return readFileSync(path, "utf8") as Result<string, DendronError>;
+}
+
+export function readJson(path: string) {
+  return fromPromise<AnyJson, DendronError>(fs.readJSON(path), (error) => {
+    return new DendronError({
+      message: `Cannot find ${path}`,
+      severity: ERROR_SEVERITY.FATAL,
+      ...(error instanceof Error && { innerError: error }),
+    });
+  });
 }

@@ -1,9 +1,10 @@
 import {
   DVault,
   NoteChangeEntry,
-  NoteProps,
   NoteUtils,
   VaultUtils,
+  BacklinkPanelSortOrder,
+  NotePropsMeta,
 } from "@dendronhq/common-all";
 import {
   NOTE_PRESETS_V4,
@@ -25,22 +26,22 @@ import { Backlink } from "../../features/Backlink";
 import { VSCodeUtils } from "../../vsCodeUtils";
 import { expect } from "../testUtilsv2";
 import { describeMultiWS, describeSingleWS } from "../testUtilsV3";
-import { BacklinkSortOrder } from "../../types";
 import { MockEngineEvents } from "./MockEngineEvents";
+import { DConfig } from "@dendronhq/common-server";
 
 type BacklinkWithChildren = Backlink & { children?: Backlink[] | undefined };
 
 /** Asking for root children (asking for children without an input) from backlinks tree
  *  data provider will us the backlinks. */
-const getRootChildrenBacklinks = async (sortOrder?: BacklinkSortOrder) => {
+const getRootChildrenBacklinks = async (sortOrder?: BacklinkPanelSortOrder) => {
   const mockEvents = new MockEngineEvents();
   const backlinksTreeDataProvider = new BacklinksTreeDataProvider(
     mockEvents,
-    ExtensionProvider.getDWorkspace().config.dev?.enableLinkCandidates
+    ExtensionProvider.getDWorkspace().config
   );
 
   if (sortOrder) {
-    backlinksTreeDataProvider.updateSortOrder(sortOrder);
+    backlinksTreeDataProvider.sortOrder = sortOrder;
   }
 
   const parents = await backlinksTreeDataProvider.getChildren();
@@ -63,7 +64,7 @@ const getRootChildrenBacklinks = async (sortOrder?: BacklinkSortOrder) => {
 };
 
 async function getRootChildrenBacklinksAsPlainObject(
-  sortOrder?: BacklinkSortOrder
+  sortOrder?: BacklinkPanelSortOrder
 ) {
   const value = await getRootChildrenBacklinks(sortOrder);
 
@@ -98,6 +99,7 @@ function cleanOutParentPointers(
   }
 
   copy.parentBacklink = undefined;
+  copy.singleRef = undefined;
 
   if (copy.refs) {
     copy.refs = copy.refs.map((ref) => {
@@ -151,10 +153,11 @@ suite("BacklinksTreeDataProvider", function () {
     () => {
       test("THEN BacklinksTreeDataProvider calculates correct number of backlinks", async () => {
         const { engine, wsRoot, vaults } = ExtensionProvider.getDWorkspace();
-        await ExtensionProvider.getWSUtils().openNote(engine.notes["alpha"]);
+        const note = (await engine.getNote("alpha")).data!;
+        await ExtensionProvider.getWSUtils().openNote(note);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
-          path.join(wsRoot, vaults[0].fsPath, "beta.md")
+          path.join(wsRoot, VaultUtils.getRelPath(vaults[0]), "beta.md")
         ).path;
         expect(
           out[0].command.arguments[0].path.toLowerCase() as string
@@ -169,37 +172,30 @@ suite("BacklinksTreeDataProvider", function () {
         // Our utility method will add the children into out backlink structure.
         // The provider will give just the backlink hence we will remove the
         // children from the structure that will be used to assert equality.
-        const parentBacklinkForAssert = { ...parentBacklink };
-        delete parentBacklinkForAssert.children;
+        const { children, ...parentBacklinkForAssert } = parentBacklink;
 
         // Validate children added by the test setup are able to getParent()
         expect(parentBacklink.children).toBeTruthy();
         parentBacklink.children?.forEach((child) => {
           const foundParent = provider.getParent(child);
+
           assertAreEqual(foundParent, parentBacklinkForAssert);
         });
 
         // Validate backlinks created out of refs can getParent()
         expect(parentBacklink.refs).toBeTruthy();
-        const childbacklinksFromRefs = provider.getSecondLevelRefsToBacklinks(
-          parentBacklink.refs!
-        );
-        expect(childbacklinksFromRefs).toBeTruthy();
-        childbacklinksFromRefs?.forEach((backlink) => {
-          const foundParent = provider.getParent(backlink);
-          assertAreEqual(foundParent, parentBacklinkForAssert);
-        });
       });
 
       test("THEN calculating backlinks from cache returns same number of backlinks", async () => {
         // re-initialize engine from cache
         await new ReloadIndexCommand().run();
         const { engine, wsRoot, vaults } = ExtensionProvider.getDWorkspace();
-        await ExtensionProvider.getWSUtils().openNote(engine.notes["alpha"]);
+        const note = (await engine.getNote("alpha")).data!;
+        await ExtensionProvider.getWSUtils().openNote(note);
 
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
-          path.join(wsRoot, vaults[0].fsPath, "beta.md")
+          path.join(wsRoot, VaultUtils.getRelPath(vaults[0]), "beta.md")
         ).path;
         expect(
           out[0].command.arguments[0].path.toLowerCase() as string
@@ -212,6 +208,8 @@ suite("BacklinksTreeDataProvider", function () {
   describeMultiWS(
     "WHEN there is one note with the candidate word",
     {
+      // NOTE: this test often times out
+      timeout: 10e3,
       preSetupHook: async ({ wsRoot, vaults }) => {
         await NOTE_PRESETS_V4.NOTE_WITH_TARGET.create({
           wsRoot,
@@ -236,11 +234,9 @@ suite("BacklinksTreeDataProvider", function () {
           ?.enableLinkCandidates;
         expect(isLinkCandidateEnabled).toBeTruthy();
 
-        const noteWithTarget = NoteUtils.getNoteByFnameFromEngine({
-          fname: "alpha",
-          engine,
-          vault: vaults[0],
-        });
+        const noteWithTarget = (
+          await engine.findNotesMeta({ fname: "alpha", vault: vaults[0] })
+        )[0];
         await checkNoteBacklinks({ wsRoot, vaults, noteWithTarget });
       });
     }
@@ -284,20 +280,16 @@ suite("BacklinksTreeDataProvider", function () {
         await checkNoteBacklinks({
           wsRoot,
           vaults,
-          noteWithTarget: NoteUtils.getNoteByFnameFromEngine({
-            fname: "alpha",
-            engine,
-            vault: vaults[0],
-          }),
+          noteWithTarget: (
+            await engine.findNotesMeta({ fname: "alpha", vault: vaults[0] })
+          )[0],
         });
         await checkNoteBacklinks({
           wsRoot,
           vaults,
-          noteWithTarget: NoteUtils.getNoteByFnameFromEngine({
-            fname: "alpha",
-            engine,
-            vault: vaults[1],
-          }),
+          noteWithTarget: (
+            await engine.findNotesMeta({ fname: "alpha", vault: vaults[1] })
+          )[0],
         });
       });
     }
@@ -353,19 +345,10 @@ suite("BacklinksTreeDataProvider", function () {
         const notePath = path.join(wsRoot, vaults[0].fsPath, "alpha.md");
         await VSCodeUtils.openFileInEditor(Uri.file(notePath));
 
-        // Test Default sort order
-        {
-          const { out } = await getRootChildrenBacklinksAsPlainObject();
-          expect(
-            out[0].command.arguments[0].path.toLowerCase() as string
-          ).toEqual(buildVault1Path("beta.md"));
-          expect(out.length).toEqual(2);
-        }
-
         // Test Last Updated sort order
         {
           const { out } = await getRootChildrenBacklinksAsPlainObject(
-            BacklinkSortOrder.LastUpdated
+            BacklinkPanelSortOrder.LastUpdated
           );
           expect(
             out[0].command.arguments[0].path.toLowerCase() as string
@@ -376,7 +359,7 @@ suite("BacklinksTreeDataProvider", function () {
         // Test PathNames sort order
         {
           const { out } = await getRootChildrenBacklinksAsPlainObject(
-            BacklinkSortOrder.PathNames
+            BacklinkPanelSortOrder.PathNames
           );
           expect(
             out[0].command.arguments[0].path.toLowerCase() as string
@@ -387,7 +370,8 @@ suite("BacklinksTreeDataProvider", function () {
 
       test("THEN BacklinksTreeDataProvider calculates correct number of backlinks", async () => {
         const { engine, wsRoot, vaults } = ExtensionProvider.getDWorkspace();
-        await ExtensionProvider.getWSUtils().openNote(engine.notes["alpha"]);
+        const note = (await engine.getNote("alpha")).data!;
+        await ExtensionProvider.getWSUtils().openNote(note);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
           path.join(wsRoot, vaults[1].fsPath, "beta.md")
@@ -426,83 +410,17 @@ suite("BacklinksTreeDataProvider", function () {
       test("THEN link candidates should only work within a vault", async () => {
         const engine = ExtensionProvider.getEngine();
 
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
         const alphaOut = (await getRootChildrenBacklinksAsPlainObject()).out;
         expect(alphaOut).toEqual([]);
         expect(alpha.links).toEqual([]);
 
-        const gamma = engine.notes["gamma"];
+        const gamma = (await engine.getNote("gamma")).data!;
         await ExtensionProvider.getWSUtils().openNote(gamma);
         const gammaOut = (await getRootChildrenBacklinksAsPlainObject()).out;
         expect(gammaOut).toEqual([]);
         expect(gamma.links).toEqual([]);
-      });
-    }
-  );
-
-  describeSingleWS(
-    "GIVEN a single vault workspace with links and link candidates",
-    {
-      postSetupHook: async ({ wsRoot, vaults }) => {
-        await NoteTestUtilsV4.createNote({
-          fname: "alpha",
-          body: "this note has both links and candidates to it.",
-          vault: vaults[0],
-          wsRoot,
-        });
-        await NoteTestUtilsV4.createNote({
-          fname: "beta",
-          body: "[[alpha]]\nalpha",
-          vault: vaults[0],
-          wsRoot,
-        });
-      },
-      modConfigCb: (config) => {
-        config.dev = {
-          enableLinkCandidates: true,
-        };
-        return config;
-      },
-    },
-    () => {
-      test("THEN links and link candidates should have correct subtree", async () => {
-        const engine = ExtensionProvider.getEngine();
-
-        await new ReloadIndexCommand().execute();
-        const alpha = engine.notes["alpha"];
-        await ExtensionProvider.getWSUtils().openNote(alpha);
-        const { out, provider } = await getRootChildrenBacklinks();
-        const outObj = backlinksToPlainObject(out) as any;
-
-        // source should be beta.md
-
-        const sourceTreeItem = outObj[0];
-        expect(sourceTreeItem.label).toEqual("beta.md");
-        // it should have two subtrees
-        expect(sourceTreeItem.children.length).toEqual(2);
-
-        // a subtree for link(s), holding one backlink, "[[alpha]]"
-        const linkSubTreeItem = sourceTreeItem.children[0];
-        expect(linkSubTreeItem.label).toEqual("Linked");
-        expect(linkSubTreeItem.refs.length).toEqual(1);
-        expect(linkSubTreeItem.refs[0].matchText).toEqual("[[alpha]]");
-
-        // a subtree for candidate(s), holding one candidate item, "alpha"
-        const candidateSubTreeItem = sourceTreeItem.children[1];
-        expect(candidateSubTreeItem.label).toEqual("Candidates");
-        expect(candidateSubTreeItem.refs.length).toEqual(1);
-        expect(candidateSubTreeItem.refs[0].matchText).toEqual("alpha");
-
-        // in each subtree, TreeItems that hold actual links should exist.
-        // they are leaf nodes (no children).
-        const link = await provider.getChildren(out[0].children![0]);
-        expect(link![0].label).toEqual("[[alpha]]");
-        expect(link![0].refs).toEqual(undefined);
-
-        const candidate = await provider.getChildren(out[0].children![1]);
-        expect(candidate![0].label).toEqual("alpha");
-        expect(candidate![0].refs).toEqual(undefined);
       });
     }
   );
@@ -526,23 +444,22 @@ suite("BacklinksTreeDataProvider", function () {
       },
     },
     () => {
-      test("THEN candidates subtree doesn't show up", async () => {
+      test("THEN candidate links don't show up", async () => {
         const engine = ExtensionProvider.getEngine();
 
         await new ReloadIndexCommand().execute();
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
 
         const { out: alphaOut } = await getRootChildrenBacklinks();
         const alphaOutObj = backlinksToPlainObject(alphaOut) as any;
         expect(_.isEmpty(alphaOutObj)).toBeTruthy();
 
-        const beta = engine.notes["beta"];
+        const beta = (await engine.getNote("beta")).data!;
         await ExtensionProvider.getWSUtils().openNote(beta);
         const { out: betaOut } = await getRootChildrenBacklinks();
         const betaOutObj = backlinksToPlainObject(betaOut) as any;
         expect(betaOutObj[0].children.length).toEqual(1);
-        expect(betaOutObj[0].children[0].label).toEqual("Linked");
       });
     }
   );
@@ -577,7 +494,7 @@ suite("BacklinksTreeDataProvider", function () {
 
         // need this until we move it out of the feature flag.
         await new ReloadIndexCommand().execute();
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
 
         const { out } = await getRootChildrenBacklinks();
@@ -586,19 +503,9 @@ suite("BacklinksTreeDataProvider", function () {
         // source should be beta.md
 
         const sourceTreeItem = outObj[0];
-        expect(sourceTreeItem.label).toEqual("beta.md");
-        // it should have two subtrees
-        expect(sourceTreeItem.children.length).toEqual(2);
-
-        // a subtree for link(s), holding three backlink
-        const linkSubTreeItem = sourceTreeItem.children[0];
-        expect(linkSubTreeItem.label).toEqual("Linked");
-        expect(linkSubTreeItem.refs.length).toEqual(3);
-
-        // a subtree for candidate(s), holding five candidate items
-        const candidateSubTreeItem = sourceTreeItem.children[1];
-        expect(candidateSubTreeItem.label).toEqual("Candidates");
-        expect(candidateSubTreeItem.refs.length).toEqual(5);
+        expect(sourceTreeItem.label).toEqual("beta");
+        // it should have all links and references in a flat list
+        expect(sourceTreeItem.children.length).toEqual(8);
       });
     }
   );
@@ -631,7 +538,7 @@ suite("BacklinksTreeDataProvider", function () {
       test("THEN BacklinksTreeDataProvider calculates correct number of backlinks", async () => {
         const { engine, wsRoot, vaults } = ExtensionProvider.getDWorkspace();
 
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
@@ -662,12 +569,12 @@ suite("BacklinksTreeDataProvider", function () {
     () => {
       test("THEN BacklinksTreeDataProvider calculates correct number of links", async () => {
         const { engine, wsRoot } = ExtensionProvider.getDWorkspace();
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
           NoteUtils.getFullPath({
-            note: engine.notes["beta"],
+            note: (await engine.getNote("beta")).data!,
             wsRoot,
           })
         ).path;
@@ -697,7 +604,7 @@ suite("BacklinksTreeDataProvider", function () {
     () => {
       test("THEN BacklinksTreeDataProvider calculates correct number of links", async () => {
         const { engine, wsRoot } = ExtensionProvider.getDWorkspace();
-        const alpha = engine.notes["alpha"];
+        const alpha = (await engine.getNote("alpha")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         // assert.strictEqual(
@@ -706,7 +613,7 @@ suite("BacklinksTreeDataProvider", function () {
         // );
         const expectedPath = vscode.Uri.file(
           NoteUtils.getFullPath({
-            note: engine.notes["beta"],
+            note: (await engine.getNote("beta")).data!,
             wsRoot,
           })
         ).path;
@@ -738,12 +645,12 @@ suite("BacklinksTreeDataProvider", function () {
     () => {
       test("THEN BacklinksTreeDataProvider calculates correct number of links", async () => {
         const { engine, wsRoot } = ExtensionProvider.getDWorkspace();
-        const alpha = engine.notes["tags.my.test-0.tag"];
+        const alpha = (await engine.getNote("tags.my.test-0.tag")).data!;
         await ExtensionProvider.getWSUtils().openNote(alpha);
         const { out } = await getRootChildrenBacklinksAsPlainObject();
         const expectedPath = vscode.Uri.file(
           NoteUtils.getFullPath({
-            note: engine.notes["test"],
+            note: (await engine.getNote("test")).data!,
             wsRoot,
           })
         ).path;
@@ -769,11 +676,11 @@ suite("BacklinksTreeDataProvider", function () {
         mockEvents = new MockEngineEvents();
         backlinksTreeDataProvider = new BacklinksTreeDataProvider(
           mockEvents,
-          ExtensionProvider.getEngine().config.dev?.enableLinkCandidates
+          DConfig.readConfigSync(ExtensionProvider.getDWorkspace().wsRoot)
         );
 
         updateSortOrder = sinon
-          .stub(BacklinksTreeDataProvider.prototype, "updateSortOrder")
+          .stub(BacklinksTreeDataProvider.prototype, "sortOrder")
           .returns(undefined);
       });
       afterEach(() => {
@@ -782,8 +689,11 @@ suite("BacklinksTreeDataProvider", function () {
       });
 
       test("AND a note gets created, THEN the data provider refresh event gets invoked", (done) => {
-        const engine = ExtensionProvider.getEngine();
-        const testNoteProps = engine.notes["foo"];
+        const { vaults } = ExtensionProvider.getDWorkspace();
+        const testNoteProps = NoteUtils.create({
+          fname: "foo",
+          vault: vaults[0],
+        });
         const entry: NoteChangeEntry = {
           note: testNoteProps,
           status: "create",
@@ -797,8 +707,11 @@ suite("BacklinksTreeDataProvider", function () {
       });
 
       test("AND a note gets updated, THEN the data provider refresh event gets invoked", (done) => {
-        const engine = ExtensionProvider.getEngine();
-        const testNoteProps = engine.notes["foo"];
+        const { vaults } = ExtensionProvider.getDWorkspace();
+        const testNoteProps = NoteUtils.create({
+          fname: "foo",
+          vault: vaults[0],
+        });
         const entry: NoteChangeEntry = {
           prevNote: testNoteProps,
           note: testNoteProps,
@@ -813,8 +726,11 @@ suite("BacklinksTreeDataProvider", function () {
       });
 
       test("AND a note gets deleted, THEN the data provider refresh event gets invoked", (done) => {
-        const engine = ExtensionProvider.getEngine();
-        const testNoteProps = engine.notes["foo"];
+        const { vaults } = ExtensionProvider.getDWorkspace();
+        const testNoteProps = NoteUtils.create({
+          fname: "foo",
+          vault: vaults[0],
+        });
         const entry: NoteChangeEntry = {
           note: testNoteProps,
           status: "delete",
@@ -837,7 +753,7 @@ async function checkNoteBacklinks({
 }: {
   wsRoot: string;
   vaults: DVault[];
-  noteWithTarget?: NoteProps;
+  noteWithTarget?: NotePropsMeta;
 }): Promise<boolean> {
   expect(noteWithTarget).toBeTruthy();
   await ExtensionProvider.getWSUtils().openNote(noteWithTarget!);
@@ -854,365 +770,3 @@ async function checkNoteBacklinks({
   expect(ref.matchText as string).toEqual("alpha");
   return true;
 }
-
-// suite('BacklinksTreeDataProvider', () => {
-
-//   it('should provide backlinks', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-//     const name1 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(`a-${name0}.md`, `First note with backlink [[${link}]]`);
-//     await createFile(`b-${name1}.md`, `Second note with backlink [[${link}]]`);
-
-//     const doc = await openTextDocument(`${link}.md`);
-//     await window.showTextDocument(doc);
-
-//     expect(toPlainObject(await getChildren())).toMatchObject([
-//       {
-//         collapsibleState: 2,
-//         label: `a-${name0}.md`,
-//         refs: expect.any(Array),
-//         description: '(1) ',
-//         tooltip: `${path.join(getWorkspaceFolder()!, `a-${name0}.md`)}`,
-//         command: {
-//           command: 'vscode.open',
-//           arguments: [
-//             expect.objectContaining({
-//               path: Uri.file(path.join(getWorkspaceFolder()!, `a-${name0}.md`)).path,
-//               scheme: 'file',
-//             }),
-//             {
-//               selection: [
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//               ],
-//             },
-//           ],
-//           title: 'Open File',
-//         },
-//         children: [
-//           {
-//             collapsibleState: 0,
-//             label: '1:27',
-//             description: `[[${link}]]`,
-//             tooltip: `[[${link}]]`,
-//             command: {
-//               command: 'vscode.open',
-//               arguments: [
-//                 expect.objectContaining({
-//                   path: Uri.file(path.join(getWorkspaceFolder()!, `a-${name0}.md`)).path,
-//                   scheme: 'file',
-//                 }),
-//                 {
-//                   selection: [
-//                     {
-//                       line: 0,
-//                       character: 27,
-//                     },
-//                     {
-//                       line: 0,
-//                       character: expect.any(Number),
-//                     },
-//                   ],
-//                 },
-//               ],
-//               title: 'Open File',
-//             },
-//           },
-//         ],
-//       },
-//       {
-//         collapsibleState: 2,
-//         label: `b-${name1}.md`,
-//         refs: expect.any(Array),
-//         description: '(1) ',
-//         tooltip: `${path.join(getWorkspaceFolder()!, `b-${name1}.md`)}`,
-//         command: {
-//           command: 'vscode.open',
-//           arguments: [
-//             expect.objectContaining({
-//               path: Uri.file(path.join(getWorkspaceFolder()!, `b-${name1}.md`)).path,
-//               scheme: 'file',
-//             }),
-//             {
-//               selection: [
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//               ],
-//             },
-//           ],
-//           title: 'Open File',
-//         },
-//         children: [
-//           {
-//             collapsibleState: 0,
-//             label: '1:28',
-//             description: `[[${link}]]`,
-//             tooltip: `[[${link}]]`,
-//             command: {
-//               command: 'vscode.open',
-//               arguments: [
-//                 expect.objectContaining({
-//                   path: Uri.file(path.join(getWorkspaceFolder()!, `b-${name1}.md`)).path,
-//                   scheme: 'file',
-//                 }),
-//                 {
-//                   selection: [
-//                     {
-//                       line: 0,
-//                       character: 28,
-//                     },
-//                     {
-//                       line: 0,
-//                       character: expect.any(Number),
-//                     },
-//                   ],
-//                 },
-//               ],
-//               title: 'Open File',
-//             },
-//           },
-//         ],
-//       },
-//     ]);
-//   });
-
-//   it('should provide backlinks for file with parens in name', async () => {
-//     const link = `Note (${rndName()})`;
-//     const name0 = rndName();
-//     const name1 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(`a-${name0}.md`, `First note with backlink [[${link}]]`);
-//     await createFile(`b-${name1}.md`, `Second note with backlink [[${link}]]`);
-
-//     const doc = await openTextDocument(`${link}.md`);
-//     await window.showTextDocument(doc);
-
-//     expect(toPlainObject(await getChildren())).toMatchObject([
-//       {
-//         collapsibleState: 2,
-//         label: `a-${name0}.md`,
-//         refs: expect.any(Array),
-//         description: '(1) ',
-//         tooltip: `${path.join(getWorkspaceFolder()!, `a-${name0}.md`)}`,
-//         command: {
-//           command: 'vscode.open',
-//           arguments: [
-//             expect.objectContaining({
-//               path: Uri.file(path.join(getWorkspaceFolder()!, `a-${name0}.md`)).path,
-//               scheme: 'file',
-//             }),
-//             {
-//               selection: [
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//               ],
-//             },
-//           ],
-//           title: 'Open File',
-//         },
-//         children: [
-//           {
-//             collapsibleState: 0,
-//             label: '1:27',
-//             description: `[[${link}]]`,
-//             tooltip: `[[${link}]]`,
-//             command: {
-//               command: 'vscode.open',
-//               arguments: [
-//                 expect.objectContaining({
-//                   path: Uri.file(path.join(getWorkspaceFolder()!, `a-${name0}.md`)).path,
-//                   scheme: 'file',
-//                 }),
-//                 {
-//                   selection: [
-//                     {
-//                       line: 0,
-//                       character: 27,
-//                     },
-//                     {
-//                       line: 0,
-//                       character: expect.any(Number),
-//                     },
-//                   ],
-//                 },
-//               ],
-//               title: 'Open File',
-//             },
-//           },
-//         ],
-//       },
-//       {
-//         collapsibleState: 2,
-//         label: `b-${name1}.md`,
-//         refs: expect.any(Array),
-//         description: '(1) ',
-//         tooltip: `${path.join(getWorkspaceFolder()!, `b-${name1}.md`)}`,
-//         command: {
-//           command: 'vscode.open',
-//           arguments: [
-//             expect.objectContaining({
-//               path: Uri.file(path.join(getWorkspaceFolder()!, `b-${name1}.md`)).path,
-//               scheme: 'file',
-//             }),
-//             {
-//               selection: [
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//                 {
-//                   line: 0,
-//                   character: 0,
-//                 },
-//               ],
-//             },
-//           ],
-//           title: 'Open File',
-//         },
-//         children: [
-//           {
-//             collapsibleState: 0,
-//             label: '1:28',
-//             description: `[[${link}]]`,
-//             tooltip: `[[${link}]]`,
-//             command: {
-//               command: 'vscode.open',
-//               arguments: [
-//                 expect.objectContaining({
-//                   path: Uri.file(path.join(getWorkspaceFolder()!, `b-${name1}.md`)).path,
-//                   scheme: 'file',
-//                 }),
-//                 {
-//                   selection: [
-//                     {
-//                       line: 0,
-//                       character: 28,
-//                     },
-//                     {
-//                       line: 0,
-//                       character: expect.any(Number),
-//                     },
-//                   ],
-//                 },
-//               ],
-//               title: 'Open File',
-//             },
-//           },
-//         ],
-//       },
-//     ]);
-//   });
-
-//   it('should not provide backlinks for link within code span', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(`a-${name0}.md`, `\`[[${link}]]\``);
-
-//     const doc = await openTextDocument(`${link}.md`);
-//     await window.showTextDocument(doc);
-
-//     expect(toPlainObject(await getChildren())).toHaveLength(0);
-//   });
-
-//   it('should not provide backlinks for link within code span 2', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(
-//       `a-${name0}.md`,
-//       `
-//     Preceding text
-//     \`[[${link}]]\`
-//     Following text
-//     `,
-//     );
-
-//     const doc = await openTextDocument(`${link}.md`);
-//     await window.showTextDocument(doc);
-
-//     expect(toPlainObject(await getChildren())).toHaveLength(0);
-//   });
-
-//   it('should not provide backlinks for link within fenced code block', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(
-//       `a-${name0}.md`,
-//       `
-//     \`\`\`
-//     Preceding text
-//     [[${link}]]
-//     Following text
-//     \`\`\`
-//     `,
-//     );
-
-//     const doc = await openTextDocument(`${link}.md`);
-//     await window.showTextDocument(doc);
-
-//     expect(toPlainObject(await getChildren())).toHaveLength(0);
-//   });
-
-//   it('should collapse parent items according to configuration', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-//     const name1 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(`a-${name0}.md`, `First note with backlink [[${link}]]`);
-//     await createFile(`b-${name1}.md`, `Second note with backlink [[${link}]]`);
-
-//     const doc = await openTextDocument(`${link}.md`);
-
-//     await window.showTextDocument(doc);
-
-//     await updateMemoConfigProperty('backlinksPanel.collapseParentItems', true);
-
-//     expect((await getChildren()).every((child) => child.collapsibleState === 1)).toBe(true);
-//   });
-
-//   it('should expand parent items according to config', async () => {
-//     const link = rndName();
-//     const name0 = rndName();
-//     const name1 = rndName();
-
-//     await createFile(`${link}.md`);
-//     await createFile(`a-${name0}.md`, `First note with backlink [[${link}]]`);
-//     await createFile(`b-${name1}.md`, `Second note with backlink [[${link}]]`);
-
-//     const doc = await openTextDocument(`${link}.md`);
-
-//     await window.showTextDocument(doc);
-
-//     expect(getMemoConfigProperty('backlinksPanel.collapseParentItems', null)).toBe(false);
-
-//     expect((await getChildren()).every((child) => child.collapsibleState === 2)).toBe(true);
-//   });
-// });

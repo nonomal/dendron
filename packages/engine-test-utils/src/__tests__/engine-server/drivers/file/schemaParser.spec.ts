@@ -6,6 +6,7 @@ import {
   DendronError,
   SchemaModuleProps,
   SchemaProps,
+  URI,
   WorkspaceOpts,
 } from "@dendronhq/common-all";
 
@@ -25,13 +26,13 @@ async function parseSchemas(
       const engineClient = engine as DendronEngineClient;
 
       const parser: SchemaParser = new SchemaParser({
-        wsRoot: engineClient.store.wsRoot,
+        wsRoot: engineClient.wsRoot,
         logger: engineClient.logger,
       });
       const vault = vaults[0];
       const vpath = vault2Path({ vault, wsRoot });
       const schemaFiles = await getAllFiles({
-        root: vpath,
+        root: URI.file(vpath),
         include: ["*.schema.yml"],
       });
       expect(schemaFiles.data).toBeTruthy();

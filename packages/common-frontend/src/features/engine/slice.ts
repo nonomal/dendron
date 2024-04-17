@@ -2,10 +2,13 @@ import {
   DendronApiV2,
   DEngineInitPayload,
   NoteProps,
-  NotePropsDict,
+  NotePropsByIdDict,
   stringifyError,
   NoteUtils,
-  ConfigGetPayload,
+  NoteFnameDictUtils,
+  NoteDictsUtils,
+  DendronConfig,
+  SchemaModuleDict,
 } from "@dendronhq/common-all";
 import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 import _ from "lodash";
@@ -13,6 +16,7 @@ import { EngineSliceState, LoadingStatus } from "../../types";
 import { createLogger } from "../../utils";
 // @ts-ignore
 import internal from "@reduxjs/toolkit/node_modules/immer/dist/internal";
+
 /**
  * Equivalent to engine.init
  */
@@ -28,6 +32,7 @@ export const initNotes = createAsyncThunk(
     });
     logger.info({ state: "pre:workspaceSync" });
     const resp = await api.workspaceSync({ ws });
+    const schemaQueryResp = await api.schemaQuery({ qs: "*" });
     logger.info({ state: "post:workspaceSync" });
     if (resp.error) {
       dispatch(setError(stringifyError(resp.error)));
@@ -35,7 +40,14 @@ export const initNotes = createAsyncThunk(
     }
     const data = resp.data!;
     logger.info({ state: "pre:setNotes" });
-    dispatch(setFromInit(data));
+
+    const schemaDict: SchemaModuleDict = {};
+
+    schemaQueryResp.data?.map((ent) => {
+      schemaDict[ent.root.id] = ent;
+    });
+
+    dispatch(setFromInit({ ...data, schemas: schemaDict }));
     dispatch(setError(undefined));
     logger.info({ state: "post:setNotes" });
     return resp;
@@ -92,7 +104,11 @@ export const syncNote = createAsyncThunk(
       return resp;
     }
     const data = resp.data!;
-    logger.info({ state: "pre:setNotes" });
+    logger.debug({
+      state: "pre:setNotes",
+      // Logging notes, but avoiding it if there's too many notes to avoid any performance impact
+      notes: data.length < 10 ? data.map(NoteUtils.toLogObj) : null,
+    });
     if (data?.length) {
       dispatch(updateNote(data[0]));
       dispatch(setError(undefined));
@@ -143,6 +159,7 @@ const initialState: InitialState = {
   currentRequestId: undefined,
   vaults: [],
   notes: {},
+  noteFName: {},
   schemas: {},
   notesRendered: {},
   error: null,
@@ -153,18 +170,22 @@ export const engineSlice = createSlice({
   name: "engine",
   initialState,
   reducers: {
-    setFromInit: (state, action: PayloadAction<DEngineInitPayload>) => {
+    setFromInit: (
+      state,
+      action: PayloadAction<DEngineInitPayload & { schemas: SchemaModuleDict }>
+    ) => {
       const { notes, wsRoot, schemas, vaults, config } = action.payload;
       state.notes = notes;
       state.wsRoot = wsRoot;
       state.schemas = schemas;
       state.vaults = vaults;
       state.config = config;
+      state.noteFName = NoteFnameDictUtils.createNotePropsByFnameDict(notes);
     },
-    setConfig: (state, action: PayloadAction<ConfigGetPayload>) => {
+    setConfig: (state, action: PayloadAction<DendronConfig>) => {
       state.config = action.payload;
     },
-    setNotes: (state, action: PayloadAction<NotePropsDict>) => {
+    setNotes: (state, action: PayloadAction<NotePropsByIdDict>) => {
       state.notes = action.payload;
     },
     setError: (state, action: PayloadAction<any>) => {
@@ -181,6 +202,7 @@ export const engineSlice = createSlice({
       state.schemas = {};
       state.notesRendered = {};
       state.error = null;
+      state.noteFName = {};
     },
     setRenderNote: (
       state,
@@ -195,15 +217,21 @@ export const engineSlice = createSlice({
         state.notes = {};
       }
       // this is a new node
+      const noteDicts = {
+        notesById: state.notes,
+        notesByFname: state.noteFName,
+      };
       if (!state.notes[note.id]) {
-        NoteUtils.addOrUpdateParents({
+        const changed = NoteUtils.addOrUpdateParents({
           note,
-          notesList: _.values(state.notes),
+          noteDicts,
           createStubs: true,
-          wsRoot: state.wsRoot!,
         });
+        changed.forEach((noteChangeEntry) =>
+          NoteDictsUtils.add(noteChangeEntry.note, noteDicts)
+        );
       }
-      state.notes[note.id] = note;
+      NoteDictsUtils.add(note, noteDicts);
     },
   },
   extraReducers: (builder) => {

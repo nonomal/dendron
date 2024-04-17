@@ -127,7 +127,7 @@ export const NOTE_PRESETS_V4 = {
   NOTE_WITH_TARGET: CreateNoteFactory({ fname: "alpha", body: "[[beta]]" }),
   /**
    *  fname: beta
-   *  body: [[alpah]]
+   *  body: [[alpha]]
    */
   NOTE_WITH_LINK: CreateNoteFactory({ fname: "beta", body: "[[alpha]]" }),
   NOTE_WITH_LINK_CANDIDATE_TARGET: CreateNoteFactory({
@@ -160,15 +160,6 @@ export const NOTE_PRESETS_V4 = {
   NOTE_WITH_CAPS_AND_SPACE: CreateNoteFactory({
     fname: "000 Index.md",
     body: "[[alpha]]",
-  }),
-  NOTE_WITH_DATE_VARIABLES: CreateNoteFactory({
-    fname: "date-variables",
-    body: [
-      "Today is <%= CURRENT_YEAR %>.<%=CURRENT_MONTH %>.<%=CURRENT_DAY%>",
-      "It is week <%= CURRENT_WEEK %> of the year",
-      "This link goes to [[daily.journal.<%=CURRENT_YEAR%>.<%= CURRENT_MONTH%>.<%= CURRENT_DAY %>]]",
-      "{{ 1 + 1 }} should not be evalated to 2",
-    ].join("\n"),
   }),
   NOTE_WITH_FM_VARIABLES: CreateNoteFactory({
     fname: "fm-variables",
@@ -255,8 +246,11 @@ export const NOTE_PRESETS_V4 = {
     },
   }),
   NOTE_WITH_UPPER_CASE_TITLE: CreateNoteFactory({
-    fname: "Aardvark",
+    fname: "aardvark",
     body: "aardvark",
+    props: {
+      title: "Aardvark",
+    },
   }),
   NOTE_WITH_UNDERSCORE_TITLE: CreateNoteFactory({
     fname: "_underscore",

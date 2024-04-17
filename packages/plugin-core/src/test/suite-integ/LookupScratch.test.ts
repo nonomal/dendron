@@ -3,19 +3,14 @@ import {
   LookupNoteTypeEnum,
   LookupSelectionTypeEnum,
   NoteAddBehaviorEnum,
-  NoteUtils,
 } from "@dendronhq/common-all";
 import { NOTE_PRESETS_V4 } from "@dendronhq/common-test-utils";
 import { describe } from "mocha";
 import * as vscode from "vscode";
 import { NoteLookupCommand } from "../../commands/NoteLookupCommand";
-import { getDWorkspace } from "../../workspace";
+import { ExtensionProvider } from "../../ExtensionProvider";
 import { WSUtils } from "../../WSUtils";
-import {
-  expect,
-  getNoteFromFname,
-  getNoteFromTextEditor,
-} from "../testUtilsv2";
+import { expect, getNoteFromTextEditor } from "../testUtilsv2";
 import { runLegacyMultiWorkspaceTest, setupBeforeAfter } from "../testUtilsV3";
 
 suite("Scratch Notes", function () {
@@ -34,13 +29,8 @@ suite("Scratch Notes", function () {
         onInit: async ({ vaults }) => {
           const vault = vaults[0];
           const fname = NOTE_PRESETS_V4.NOTE_SIMPLE.fname;
-          const notes = getDWorkspace().engine.notes;
-          const note = NoteUtils.getNoteByFnameV5({
-            fname,
-            notes,
-            vault,
-            wsRoot: getDWorkspace().wsRoot,
-          });
+          const engine = ExtensionProvider.getEngine();
+          const note = (await engine.findNotesMeta({ fname, vault }))[0];
           const editor = await WSUtils.openNote(note!);
           const SIMPLE_SELECTION = new vscode.Selection(7, 0, 7, 12);
           editor.selection = SIMPLE_SELECTION;
@@ -73,11 +63,12 @@ suite("Scratch Notes", function () {
             wsRoot,
           });
         },
-        onInit: async ({ vaults }) => {
+        onInit: async ({ vaults, engine }) => {
           const vault = vaults[0];
           const { fname, selection } =
             NOTE_PRESETS_V4.NOTE_DOMAIN_NAMESPACE_CHILD;
-          const editor = await getNoteFromFname({ fname, vault });
+          const note = (await engine.findNotesMeta({ fname, vault }))[0];
+          const editor = await WSUtils.openNote(note);
           editor.selection = new vscode.Selection(...selection);
           await new NoteLookupCommand().run({
             selectionType: LookupSelectionTypeEnum.selection2link,
@@ -85,7 +76,7 @@ suite("Scratch Notes", function () {
             noConfirm: true,
           });
           const scratchNote = getNoteFromTextEditor();
-          expect(scratchNote.fname.startsWith("pro.scratch")).toBeTruthy();
+          expect(scratchNote.fname.startsWith("pro.foo.scratch")).toBeTruthy();
           done();
         },
       });
@@ -105,13 +96,8 @@ suite("Scratch Notes", function () {
         onInit: async ({ vaults }) => {
           const vault = vaults[1];
           const fname = NOTE_PRESETS_V4.NOTE_SIMPLE.fname;
-          const notes = getDWorkspace().engine.notes;
-          const note = NoteUtils.getNoteByFnameV5({
-            fname,
-            notes,
-            vault,
-            wsRoot: getDWorkspace().wsRoot,
-          });
+          const engine = ExtensionProvider.getEngine();
+          const note = (await engine.findNotesMeta({ fname, vault }))[0];
           const editor = await WSUtils.openNote(note!);
           const SIMPLE_SELECTION = new vscode.Selection(7, 0, 7, 12);
           editor.selection = SIMPLE_SELECTION;
@@ -144,11 +130,12 @@ suite("Scratch Notes", function () {
             wsRoot,
           });
         },
-        onInit: async ({ vaults }) => {
+        onInit: async ({ vaults, engine }) => {
           const vault = vaults[1];
           const { fname, selection } =
             NOTE_PRESETS_V4.NOTE_DOMAIN_NAMESPACE_CHILD;
-          const editor = await getNoteFromFname({ fname, vault });
+          const note = (await engine.findNotesMeta({ fname, vault }))[0];
+          const editor = await WSUtils.openNote(note);
           editor.selection = new vscode.Selection(...selection);
           await new NoteLookupCommand().run({
             selectionType: LookupSelectionTypeEnum.selection2link,
@@ -156,7 +143,7 @@ suite("Scratch Notes", function () {
             noConfirm: true,
           });
           const scratchNote = getNoteFromTextEditor();
-          expect(scratchNote.fname.startsWith("pro.scratch")).toBeTruthy();
+          expect(scratchNote.fname.startsWith("pro.foo.scratch")).toBeTruthy();
           done();
         },
       });

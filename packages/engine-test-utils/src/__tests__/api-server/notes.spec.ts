@@ -1,11 +1,11 @@
 import {
   APIUtils,
   DendronAPI,
-  DendronError,
   DVault,
-  NoteProps,
-  NoteUtils,
-  RenderNotePayload,
+  GetNoteMetaResp,
+  GetNoteResp,
+  NotePropsMeta,
+  RenderNoteResp,
 } from "@dendronhq/common-all";
 import { createServer, runEngineTestV5 } from "../../engine";
 import { ENGINE_HOOKS } from "../../presets";
@@ -29,7 +29,7 @@ async function getApiWithInitializedWS(wsRoot: string, vaults: DVault[]) {
 
 describe("api/note/render tests", () => {
   describe(`WHEN calling /render on non existent file`, () => {
-    let rendered: { data: RenderNotePayload; error: DendronError | null };
+    let rendered: RenderNoteResp;
 
     beforeAll(async () => {
       await runEngineTestV5(
@@ -58,29 +58,25 @@ describe("api/note/render tests", () => {
     const EXPECTED_FOO_RENDERED =
       '<h1 id="foo">Foo</h1>\n<p>foo body</p>\n<hr>\n<strong>Children</strong>\n<ol>\n<li><a href="foo.ch1">Ch1</a></li>\n</ol>';
 
-    let renderFoo: () => Promise<{
-      data: RenderNotePayload;
-      error: DendronError | null;
-    }>;
+    let renderFoo: () => Promise<RenderNoteResp>;
     let updateFoo: (noteUpdateValues: any) => Promise<void>;
 
     beforeAll(async () => {
       await runEngineTestV5(
         async ({ wsRoot, vaults, engine }) => {
-          const notes = engine.notes;
           const vault1 = vaults[0];
 
-          const fooNote = NoteUtils.getNoteByFnameV5({
-            fname: "foo",
-            notes,
-            vault: vault1,
-            wsRoot,
-          }) as NoteProps;
+          const fooNote = (
+            await engine.findNotesMeta({
+              fname: "foo",
+              vault: vault1,
+            })
+          )[0];
 
           const api = await getApiWithInitializedWS(wsRoot, vaults);
 
           renderFoo = async () => {
-            return await api.noteRender({
+            return api.noteRender({
               ws: wsRoot,
               id: fooNote.id,
             });
@@ -88,10 +84,9 @@ describe("api/note/render tests", () => {
 
           updateFoo = async (noteUpdateValues: any) => {
             // Modify the value of foo
-            await api.engineUpdateNote({
+            await api.engineWrite({
               ws: wsRoot,
-              opts: { newNode: false },
-              note: {
+              node: {
                 ...fooNote,
                 updated: fooNote.updated + 1,
                 ...noteUpdateValues,
@@ -109,7 +104,7 @@ describe("api/note/render tests", () => {
     });
 
     it(`THEN error is null.`, async () => {
-      expect((await renderFoo()).error).toBeNull();
+      expect((await renderFoo()).error).toBeUndefined();
     });
 
     describe(`AND body is updated`, () => {
@@ -130,30 +125,29 @@ describe("api/note/render tests", () => {
   });
 
   describe(`GIVEN notes with recursive reference relationship: foo-->![[foo.one]]-->![[foo.two]]`, () => {
-    let fooNote: NoteProps;
-    let fooTwo: NoteProps;
+    let fooNote: NotePropsMeta;
+    let fooTwo: NotePropsMeta;
     let api: DendronAPI;
     let wsRoot: string;
     beforeAll(async () => {
       await runEngineTestV5(
         async ({ wsRoot: _wsRoot, vaults, engine }) => {
           wsRoot = _wsRoot;
-          const notes = engine.notes;
           const vault1 = vaults[0];
 
-          fooNote = NoteUtils.getNoteByFnameV5({
-            fname: "foo",
-            notes,
-            vault: vault1,
-            wsRoot,
-          }) as NoteProps;
+          fooNote = (
+            await engine.findNotesMeta({
+              fname: "foo",
+              vault: vault1,
+            })
+          )[0];
 
-          fooTwo = NoteUtils.getNoteByFnameV5({
-            fname: "foo.two",
-            notes,
-            vault: vault1,
-            wsRoot,
-          }) as NoteProps;
+          fooTwo = (
+            await engine.findNotesMeta({
+              fname: "foo.two",
+              vault: vault1,
+            })
+          )[0];
 
           api = await getApiWithInitializedWS(wsRoot, vaults);
         },
@@ -162,7 +156,7 @@ describe("api/note/render tests", () => {
     });
 
     describe(`WHEN top level foo is rendered`, () => {
-      let rendered: { data: RenderNotePayload; error: DendronError | null };
+      let rendered: RenderNoteResp;
 
       beforeAll(async () => {
         rendered = await api.noteRender({
@@ -172,7 +166,7 @@ describe("api/note/render tests", () => {
       });
 
       it(`THEN it should be error free`, () => {
-        expect(rendered.error).toBeNull();
+        expect(rendered.error).toBeUndefined();
       });
 
       it(`THEN it should contain content from nested foo.two`, () => {
@@ -183,14 +177,13 @@ describe("api/note/render tests", () => {
     });
 
     describe(`WHEN foo.two is updated AND foo is rendered`, () => {
-      let rendered: { data: RenderNotePayload; error: DendronError | null };
+      let rendered: RenderNoteResp;
 
       beforeAll(async () => {
         // Modify the value of foo-two
-        await api.engineUpdateNote({
+        await api.engineWrite({
           ws: wsRoot,
-          opts: { newNode: false },
-          note: {
+          node: {
             ...fooTwo,
             updated: 2,
             body: "modified-val",
@@ -204,7 +197,7 @@ describe("api/note/render tests", () => {
       });
 
       it(`THEN rendered should be error free`, () => {
-        expect(rendered.error).toBeNull();
+        expect(rendered.error).toBeUndefined();
       });
 
       it(`THEN rendered to not contain previous foo.two value`, () => {
@@ -215,6 +208,115 @@ describe("api/note/render tests", () => {
       it(`THEN rendered foo to contain newly modified value from foo.two.`, () => {
         expect(rendered.data?.includes("modified-val")).toBeTruthy();
       });
+    });
+  });
+});
+
+describe("api/note/get tests", () => {
+  describe(`WHEN calling /get on existent note`, () => {
+    let resp: GetNoteResp;
+
+    beforeAll(async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, vaults }) => {
+          const api = await getApiWithInitializedWS(wsRoot, vaults);
+
+          resp = await api.noteGet({
+            ws: wsRoot,
+            id: "foo",
+          });
+        },
+        { expect, preSetupHook: ENGINE_HOOKS.setupBasic }
+      );
+    });
+
+    it(`THEN data in payload is expected note`, () => {
+      expect(resp.data?.id).toEqual("foo");
+      expect(resp.data?.body).toEqual("foo body");
+    });
+
+    it(`THEN error to be undefined`, () => {
+      expect(resp.error).toBeUndefined();
+    });
+  });
+
+  describe(`WHEN calling /get on nonexistent note`, () => {
+    let resp: GetNoteResp;
+
+    beforeAll(async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, vaults }) => {
+          const api = await getApiWithInitializedWS(wsRoot, vaults);
+
+          resp = await api.noteGet({
+            ws: wsRoot,
+            id: "foobasdf",
+          });
+        },
+        { expect, preSetupHook: ENGINE_HOOKS.setupBasic }
+      );
+    });
+
+    it(`THEN data in payload is undefined`, () => {
+      expect(resp.data).toBeUndefined();
+    });
+
+    it(`THEN error contains missing note error`, () => {
+      expect(resp.error?.message).toContain("NoteProps not found");
+    });
+  });
+});
+
+describe("api/note/getMeta tests", () => {
+  describe(`WHEN calling /getMeta on existent note`, () => {
+    let resp: GetNoteMetaResp;
+
+    beforeAll(async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, vaults }) => {
+          const api = await getApiWithInitializedWS(wsRoot, vaults);
+
+          resp = await api.noteGetMeta({
+            ws: wsRoot,
+            id: "foo",
+          });
+        },
+        { expect, preSetupHook: ENGINE_HOOKS.setupBasic }
+      );
+    });
+
+    it(`THEN data in payload is expected note`, () => {
+      expect(resp.data?.id).toEqual("foo");
+    });
+
+    it(`THEN error to be undefined`, () => {
+      expect(resp.error).toBeUndefined();
+    });
+  });
+
+  describe(`WHEN calling /getMeta on nonexistent note`, () => {
+    let resp: GetNoteMetaResp;
+
+    beforeAll(async () => {
+      await runEngineTestV5(
+        async ({ wsRoot, vaults }) => {
+          const api = await getApiWithInitializedWS(wsRoot, vaults);
+
+          resp = await api.noteGetMeta({
+            ws: wsRoot,
+            id: "foobasdf",
+          });
+        },
+        { expect, preSetupHook: ENGINE_HOOKS.setupBasic }
+      );
+    });
+
+    it(`THEN data in payload is undefined`, () => {
+      expect(resp.data).toBeUndefined();
+    });
+
+    it(`THEN error contains missing note error`, () => {
+      expect(resp.error?.message).toContain("NoteProps not found");
     });
   });
 });

@@ -1,16 +1,11 @@
 {
   "folders": [
     {
-      "path": "docs/dendron-docs",
-      "name": "dendron-docs"
-    },
-    {
-      "path": "docs/seeds/dendron.dendron-site",
-      "name": "dendron.dendron-site"
-    },
-    {
       "path": ".",
       "name": "root"
+    },
+    {
+      "path": "packages/dendron-viz"
     },
     {
       "path": "packages/common-all"
@@ -37,9 +32,6 @@
       "path": "packages/pods-core"
     },
     {
-      "path": "packages/dendron-cli"
-    },
-    {
       "path": "packages/api-server"
     },
     {
@@ -52,13 +44,13 @@
       "path": "packages/engine-test-utils"
     },
     {
-      "path": "packages/dendron-next-server"
-    },
-    {
       "path": "packages/nextjs-template"
     },
     {
       "path": "packages/dendron-plugin-views"
+    },
+    {
+      "path": "packages/unified"
     },
     {
       "path": "bootstrap"
@@ -72,15 +64,20 @@
   ],
   "settings": {
     "files.exclude": {
-      "*.d.ts": true,
-      "profile": true
+      ".next/**": true,
+      "**/profile": true,
+      "**/*.tff": true,
+      "**/*.woff": true,
+      "**/*.woff2": true
     },
     "editor.codeActionsOnSave": {},
     "search.exclude": {
+      "docs/*.md": true,
+      "**/*.d.ts": true,
       "**/node_modules": true,
       "**/bower_components": true,
       "CHANGELOG.md": true,
-      "*.d.ts": true
+      ".next/**": true
     },
     "files.watcherExclude": {
       "**/.git/objects/**": true,
@@ -103,11 +100,10 @@
     "pasteImage.prefix": "/",
     "editor.suggest.snippetsPreventQuickSuggestions": false,
     "editor.suggest.showSnippets": true,
-    "editor.tabCompletion": "on"
+    "editor.tabCompletion": "on",
+    "typescript.tsdk": "root/node_modules/typescript/lib"
   },
   "extensions": {
-    "recommendations": [
-      "esbenp.prettier-vscode"
-    ]
+    "recommendations": ["esbenp.prettier-vscode"]
   }
 }

@@ -5,7 +5,7 @@ import {
   GithubIssuePublishPod,
   GITHUBMESSAGE,
 } from "@dendronhq/pods-core";
-import { NoteProps, NoteUtils, VaultUtils } from "@dendronhq/common-all";
+import { NoteProps, VaultUtils } from "@dendronhq/common-all";
 import _ from "lodash";
 
 describe("GithubIssuePod import pod", () => {
@@ -68,12 +68,12 @@ describe("GithubIssuePod import pod", () => {
           },
         });
 
-        const note = NoteUtils.getNoteOrThrow({
-          fname,
-          notes: engine.notes,
-          vault: vaults[0],
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotes({
+            fname,
+            vault: vaults[0],
+          })
+        )[0];
         expect(note.custom.status).toEqual("OPEN");
         expect(note.custom.author).toEqual("https://github.com/xyzuser");
       },
@@ -107,12 +107,12 @@ describe("GithubIssuePod import pod", () => {
             fnameAsId: true,
           },
         });
-        const note = NoteUtils.getNoteOrThrow({
-          fname,
-          notes: engine.notes,
-          vault: vaults[0],
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotesMeta({
+            fname,
+            vault: vaults[0],
+          })
+        )[0];
         expect(note.id).toEqual(fname);
       },
       {
@@ -147,12 +147,12 @@ describe("GithubIssuePod import pod", () => {
             },
           },
         });
-        const note = NoteUtils.getNoteOrThrow({
-          fname,
-          notes: engine.notes,
-          vault: vaults[0],
-          wsRoot,
-        });
+        const note = (
+          await engine.findNotesMeta({
+            fname,
+            vault: vaults[0],
+          })
+        )[0];
         expect(note.custom.type).toEqual("issue");
       },
       {
@@ -175,7 +175,7 @@ describe("GIVEN: Github publish pod is run for a note", () => {
       desc: "",
       links: [],
       anchors: {},
-      fname: "foo",
+      fname: "publish",
       updated: 1627283357535,
       created: 1627283357535,
       parent: null,
@@ -213,20 +213,23 @@ describe("GIVEN: Github publish pod is run for a note", () => {
           const vaultName = VaultUtils.getName(vaults[0]);
           pod.updateIssue = jest.fn().mockReturnValue("https://github.com/foo");
 
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, issue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: issue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           issue.parent = rootNote.id;
-          await engine.writeNote(issue, { newNode: true });
+          await engine.writeNote(issue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",
@@ -252,20 +255,23 @@ describe("GIVEN: Github publish pod is run for a note", () => {
           const vaultName = VaultUtils.getName(vaults[0]);
           const scratchIssue: NoteProps = _.omit(issue, "tags");
           scratchIssue.tags = "documentation";
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, scratchIssue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: scratchIssue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           scratchIssue.parent = rootNote.id;
-          await engine.writeNote(scratchIssue, { newNode: true });
+          await engine.writeNote(scratchIssue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",
@@ -296,21 +302,24 @@ describe("GIVEN: Github publish pod is run for a note", () => {
           const vaultName = VaultUtils.getName(vaults[0]);
           pod.createIssue = jest.fn().mockReturnValue("https://github.com/foo");
           const scratchIssue: NoteProps = _.omit(issue, "custom");
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, issue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: issue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           scratchIssue.parent = rootNote.id;
           scratchIssue.custom = {};
-          await engine.writeNote(scratchIssue, { newNode: true });
+          await engine.writeNote(scratchIssue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",
@@ -340,20 +349,23 @@ describe("GIVEN: Github publish pod is run for a note", () => {
             .fn()
             .mockReturnValue("https://github.com/foo");
           issue.custom.category = "Ideas";
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, issue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: issue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           issue.parent = rootNote.id;
-          await engine.writeNote(issue, { newNode: true });
+          await engine.writeNote(issue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",
@@ -382,20 +394,23 @@ describe("GIVEN: Github publish pod is run for a note", () => {
             .fn()
             .mockReturnValue("https://github.com/foo");
           issue.custom.category = "abcd";
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, issue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: issue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           issue.parent = rootNote.id;
-          await engine.writeNote(issue, { newNode: true });
+          await engine.writeNote(issue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",
@@ -425,20 +440,23 @@ describe("GIVEN: Github publish pod is run for a note", () => {
           const vaultName = VaultUtils.getName(vaults[0]);
           pod.updateIssue = jest.fn().mockReturnValue("https://github.com/foo");
           issue.custom.assignees = ["john", "doe"];
-          const rootNote = NoteUtils.getRoots(engine.notes).find((note) =>
-            _.isEqual(note.vault, issue.vault)
-          );
+          const rootNote = (
+            await engine.findNotesMeta({
+              fname: "root",
+              vault: issue.vault,
+            })
+          )[0];
           if (!rootNote) {
             throw new Error("No root note found.");
           }
           issue.parent = rootNote.id;
-          await engine.writeNote(issue, { newNode: true });
+          await engine.writeNote(issue);
           const resp = await pod.execute({
             engine,
             vaults,
             wsRoot,
             config: {
-              fname: "foo",
+              fname: "publish",
               vaultName,
               dest: "stdout",
               token: "asjska",

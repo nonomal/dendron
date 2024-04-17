@@ -1,11 +1,15 @@
 import {
   AppNames,
+  CLIIdentifyProps,
+  CLIProps,
   CONSTANTS,
   DendronError,
   env,
   genUUID,
   RespV2,
   RuntimeUtils,
+  VSCodeIdentifyProps,
+  VSCodeProps,
 } from "@dendronhq/common-all";
 import Analytics from "analytics-node";
 import fs from "fs-extra";
@@ -137,13 +141,38 @@ export class SegmentClient {
   private logger: DLogger;
   private _cachePath?: string;
 
+  static _locked: boolean = true;
   static _singleton: undefined | SegmentClient;
 
+  /**
+   * This is used to _unlock_ Segment client.
+   * Before this is called, calling {@link SegmentClient.instance()} will throw an error.
+   * This is to prevent accidental instantiation during module load time, as this will globally affect
+   * how clients report data.
+   */
+  static unlock() {
+    this._locked = false;
+  }
+
   static instance(opts?: SegmentClientOpts) {
-    if (_.isUndefined(this._singleton) || opts?.forceNew) {
-      this._singleton = new SegmentClient(opts);
+    if (this._locked) {
+      const message = `
+        You are trying to instantiate Segment client before _activate.
+        Please check that your code change isn't unexpectedly instantiating the Segment client
+        during module load time.
+      `;
+      throw new DendronError({
+        message,
+        payload: {
+          message,
+        },
+      });
+    } else {
+      if (_.isUndefined(this._singleton) || opts?.forceNew) {
+        this._singleton = new SegmentClient(opts);
+      }
+      return this._singleton;
     }
-    return this._singleton;
   }
 
   /** Legacy: If exists, Dendron telemetry has been disabled. */
@@ -527,69 +556,6 @@ export class SegmentClient {
   }
 }
 
-/**
- * User Profile.
- */
-type UserProfileProps = {
-  /**
-   * The number of notes in the workspace
-   */
-  numNotes?: number;
-  /**
-   * The current A/B test groups the user is participating in
-   */
-  splitTests?: string[];
-  /**
-   * The role of user. Retrieved from initial survey.
-   */
-  role?: string;
-  /**
-   * The use case of Dendron for the user. Retrieved from initial survey.
-   */
-  useCases?: string[];
-  /**
-   * The context Dendron is used for the user. Retrieved from initial survey.
-   */
-  useContext?: string;
-  /**
-   * Whether the user has intent for publishing. If so, how. Retrieved from initial survey.
-   */
-  publishingUseCase?: string;
-  /**
-   * Prior tools the user has used before Dendron. Retrieved from initial survey.
-   */
-  priorTools?: string[];
-  /**
-   * Email of user. Retrieved from initial survey.
-   */
-  email?: string;
-};
-
-// platform props
-type VSCodeProps = {
-  type: AppNames.CODE;
-  ideVersion: string;
-  ideFlavor: string;
-} & UserProfileProps;
-
-type CLIProps = {
-  type: AppNames.CLI;
-  cliVersion: string;
-} & UserProfileProps;
-
-// platform identify props
-export type VSCodeIdentifyProps = {
-  appVersion: string;
-  userAgent: string;
-  isNewAppInstall: boolean;
-  isTelemetryEnabled: boolean;
-  language: string;
-  machineId: string;
-  shell: string;
-} & VSCodeProps;
-
-export type CLIIdentifyProps = CLIProps;
-
 export class SegmentUtils {
   private static _trackCommon({
     event,
@@ -654,6 +620,7 @@ export class SegmentUtils {
         {
           ...SegmentUtils.getCommonProps(),
           ...rest,
+          os: getOS(),
         },
         {
           context: {

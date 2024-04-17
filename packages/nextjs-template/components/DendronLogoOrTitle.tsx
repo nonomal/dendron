@@ -1,8 +1,6 @@
 import { ConfigUtils, PublishUtils } from "@dendronhq/common-all";
 import { verifyEngineSliceState } from "@dendronhq/common-frontend";
-import { Col } from "antd";
 import Link from "next/link";
-import path from "path";
 import React from "react";
 import { useEngineAppSelector } from "../features/engine/hooks";
 import { DENDRON_STYLE_CONSTANTS } from "../styles/constants";
@@ -15,7 +13,7 @@ export default function DendronLogoOrTitle() {
   }
   const { title } = PublishUtils.getSEOPropsFromConfig(engine.config);
   const logoUrl = ConfigUtils.getSiteLogoUrl(engine.config) || "";
-  const publishingConfig = ConfigUtils.getPublishingConfig(engine.config);
+  const publishingConfig = ConfigUtils.getPublishing(engine.config);
 
   return (
     <Link href={getRootUrl(publishingConfig)}>

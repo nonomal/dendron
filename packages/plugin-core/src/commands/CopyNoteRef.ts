@@ -1,9 +1,10 @@
 import {
+  DendronError,
   DNoteRefData,
   DNoteRefLink,
   getSlugger,
   isBlockAnchor,
-  NoteProps,
+  NotePropsMeta,
   NoteUtils,
   VaultUtils,
 } from "@dendronhq/common-all";
@@ -13,10 +14,11 @@ import { Position, Range, Selection, TextEditor, window } from "vscode";
 import { DendronClientUtilsV2 } from "../clientUtils";
 import { PickerUtilsV2 } from "../components/lookup/utils";
 import { DENDRON_COMMANDS } from "../constants";
+import { IDendronExtension } from "../dendronExtensionInterface";
+import { ExtensionProvider } from "../ExtensionProvider";
 import { clipboard } from "../utils";
-import { getSelectionAnchors } from "../utils/editor";
+import { EditorUtils } from "../utils/EditorUtils";
 import { VSCodeUtils } from "../vsCodeUtils";
-import { getDWorkspace, getEngine } from "../workspace";
 import { BasicCommand } from "./base";
 
 type CommandOpts = {};
@@ -27,6 +29,13 @@ export class CopyNoteRefCommand extends BasicCommand<
   CommandOutput
 > {
   key = DENDRON_COMMANDS.COPY_NOTE_REF.key;
+  private extension: IDendronExtension;
+
+  constructor(ext: IDendronExtension) {
+    super();
+    this.extension = ext;
+  }
+
   async sanityCheck() {
     if (_.isUndefined(VSCodeUtils.getActiveTextEditor())) {
       return "No document open";
@@ -53,7 +62,7 @@ export class CopyNoteRefCommand extends BasicCommand<
   }
 
   async buildLink(opts: {
-    note: NoteProps;
+    note: NotePropsMeta;
     useVaultPrefix?: boolean;
     editor: TextEditor;
   }) {
@@ -65,28 +74,19 @@ export class CopyNoteRefCommand extends BasicCommand<
     const slugger = getSlugger();
     const { selection } = VSCodeUtils.getSelection();
     if (selection) {
-      const { startAnchor, endAnchor } = await getSelectionAnchors({
+      const { startAnchor, endAnchor } = await EditorUtils.getSelectionAnchors({
         editor,
         selection,
-        engine: getEngine(),
+        engine: this.extension.getEngine(),
       });
       linkData.anchorStart = startAnchor;
       if (!_.isUndefined(startAnchor) && !isBlockAnchor(startAnchor)) {
         // if a header is selected, skip the header itself
         linkData.anchorStart = slugger.slug(startAnchor);
-        linkData.anchorStartOffset = 1;
       }
       linkData.anchorEnd = endAnchor;
       if (!_.isUndefined(endAnchor) && !isBlockAnchor(endAnchor)) {
         linkData.anchorEnd = slugger.slug(endAnchor);
-      }
-      if (
-        _.isUndefined(endAnchor) &&
-        !_.isUndefined(startAnchor) &&
-        this.hasNextHeader({ selection })
-      ) {
-        // if a header is selected for the start, and nothing for the end, and there's a next anchor, then use the wildcard
-        linkData.anchorEnd = "*";
       }
     }
     const link: DNoteRefLink = {
@@ -108,24 +108,26 @@ export class CopyNoteRefCommand extends BasicCommand<
   async execute(_opts: CommandOpts) {
     const editor = VSCodeUtils.getActiveTextEditor() as TextEditor;
     const fname = NoteUtils.uri2Fname(editor.document.uri);
-    const wsRoot = getDWorkspace().wsRoot;
     const vault = PickerUtilsV2.getVaultForOpenEditor();
-    const engine = getEngine();
-    const note: NoteProps = NoteUtils.getNoteOrThrow({
-      fname,
-      notes: engine.notes,
-      wsRoot,
-      vault,
-    });
-    const useVaultPrefix = DendronClientUtilsV2.shouldUseVaultPrefix(engine);
-    const link = await this.buildLink({ note, useVaultPrefix, editor });
-    try {
-      clipboard.writeText(link);
-    } catch (err) {
-      this.L.error({ err, link });
-      throw err;
+    const { engine } = ExtensionProvider.getDWorkspace();
+    const note = (await engine.findNotesMeta({ fname, vault }))[0];
+    if (note) {
+      const useVaultPrefix = DendronClientUtilsV2.shouldUseVaultPrefix(engine);
+      const link = await this.buildLink({
+        note,
+        useVaultPrefix,
+        editor,
+      });
+      try {
+        clipboard.writeText(link);
+      } catch (err) {
+        this.L.error({ err, link });
+        throw err;
+      }
+      this.showFeedback(link);
+      return link;
+    } else {
+      throw new DendronError({ message: `note ${fname} not found` });
     }
-    this.showFeedback(link);
-    return link;
   }
 }

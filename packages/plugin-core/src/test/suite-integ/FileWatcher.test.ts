@@ -1,5 +1,5 @@
-import { NoteUtils } from "@dendronhq/common-all";
 import { NoteTestUtilsV4 } from "@dendronhq/common-test-utils";
+import { DConfig } from "@dendronhq/common-server";
 import {
   ENGINE_HOOKS_MULTI,
   TestConfigUtils,
@@ -35,20 +35,20 @@ suite("GIVEN FileWatcher", function () {
               workspaceOpts: {
                 wsRoot,
                 vaults,
-                dendronConfig: engine.config,
+                dendronConfig: DConfig.readConfigSync(wsRoot),
               },
             });
 
             const notePath = path.join(wsRoot, vaults[0].fsPath, "newbar.md");
             const uri = vscode.Uri.file(notePath);
             await watcher.onDidCreate(uri.fsPath);
-            const note = engine.notes["newbar"];
-            const root = NoteUtils.getNoteOrThrow({
-              fname: "root",
-              vault: vaults[0],
-              wsRoot,
-              notes: engine.notes,
-            });
+            const note = (await engine.getNoteMeta("newbar")).data!;
+            const root = (
+              await engine.findNotesMeta({
+                fname: "root",
+                vault: vaults[0],
+              })
+            )[0];
             expect(note.parent).toEqual(root.id);
             done();
           },
@@ -81,20 +81,20 @@ suite("GIVEN FileWatcher", function () {
               workspaceOpts: {
                 wsRoot,
                 vaults,
-                dendronConfig: engine.config,
+                dendronConfig: DConfig.readConfigSync(wsRoot),
               },
             });
 
             const notePath = path.join(wsRoot, vaults[0].fsPath, "newbar.md");
             const uri = vscode.Uri.file(notePath);
             await watcher.onDidCreate(uri.fsPath);
-            const note = engine.notes["newbar"];
-            const root = NoteUtils.getNoteOrThrow({
-              fname: "root",
-              vault: vaults[0],
-              wsRoot,
-              notes: engine.notes,
-            });
+            const note = (await engine.getNoteMeta("newbar")).data!;
+            const root = (
+              await engine.findNotesMeta({
+                fname: "root",
+                vault: vaults[0],
+              })
+            )[0];
             expect(note.parent).toEqual(root.id);
             done();
           },

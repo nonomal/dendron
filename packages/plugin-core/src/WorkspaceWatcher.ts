@@ -2,6 +2,7 @@ import {
   ConfigUtils,
   ContextualUIEvents,
   DNodeUtils,
+  ErrorUtils,
   NoteUtils,
   SchemaUtils,
   Time,
@@ -9,8 +10,10 @@ import {
   Wrap,
 } from "@dendronhq/common-all";
 import { file2Note, vault2Path } from "@dendronhq/common-server";
-import { RemarkUtils, WorkspaceUtils } from "@dendronhq/engine-server";
+import { WorkspaceUtils } from "@dendronhq/engine-server";
+import { RemarkUtils } from "@dendronhq/unified";
 import * as Sentry from "@sentry/node";
+import fs from "fs";
 import _ from "lodash";
 import path from "path";
 import {
@@ -28,10 +31,11 @@ import {
   window,
   workspace,
 } from "vscode";
+import { DoctorUtils } from "./components/doctor/utils";
 import { IDendronExtension } from "./dendronExtensionInterface";
 import { Logger } from "./logger";
+import { TextDocumentService } from "./services/node/TextDocumentService";
 import { ISchemaSyncService } from "./services/SchemaSyncServiceInterface";
-import { TextDocumentService } from "./services/TextDocumentService";
 import { AnalyticsUtils, sentryReportingCallback } from "./utils/analytics";
 import { VSCodeUtils } from "./vsCodeUtils";
 import { WindowWatcher } from "./windowWatcher";
@@ -120,14 +124,6 @@ export class WorkspaceWatcher {
     );
 
     this._extension.addDisposable(
-      workspace.onDidChangeTextDocument(
-        this._quickDebouncedOnDidChangeTextDocument,
-        this,
-        context.subscriptions
-      )
-    );
-
-    this._extension.addDisposable(
       workspace.onDidSaveTextDocument(
         this.onDidSaveTextDocument,
         this,
@@ -176,6 +172,18 @@ export class WorkspaceWatcher {
         context.subscriptions
       )
     );
+
+    if (this._extension.getDWorkspace().config.workspace.enablePerfMode) {
+      return;
+    }
+
+    this._extension.addDisposable(
+      workspace.onDidChangeTextDocument(
+        this._quickDebouncedOnDidChangeTextDocument,
+        this,
+        context.subscriptions
+      )
+    );
   }
 
   async onDidSaveTextDocument(document: TextDocument) {
@@ -183,6 +191,8 @@ export class WorkspaceWatcher {
       await this._schemaSyncService.onDidSave({
         document,
       });
+    } else {
+      await this.onDidSaveNote(document);
     }
   }
 
@@ -233,6 +243,11 @@ export class WorkspaceWatcher {
         msg: "Note opened",
         fname: NoteUtils.uri2Fname(document.uri),
       });
+      DoctorUtils.findDuplicateNoteAndPromptIfNecessary(
+        document,
+        "onDidOpenTextDocument"
+      );
+      DoctorUtils.validateFilenameFromDocumentAndPromptIfNecessary(document);
     } catch (error) {
       Sentry.captureException(error);
       throw error;
@@ -286,6 +301,9 @@ export class WorkspaceWatcher {
    * When saving a note, do some book keeping
    * - update the `updated` time in frontmatter
    * - update the note metadata in the engine
+   *
+   * this method needs to be sync since event.WaitUntil can be called
+   * in an asynchronous manner.
    * @param event
    * @returns
    */
@@ -295,50 +313,100 @@ export class WorkspaceWatcher {
     const engine = this._extension.getEngine();
     const fname = path.basename(uri.fsPath, ".md");
     const now = Time.now().toMillis();
-
-    const note = NoteUtils.getNoteByFnameFromEngine({
-      fname,
-      vault: this._extension.wsUtils.getVaultFromUri(uri),
-      engine,
-    });
-
-    // If we can't find the note, don't do anything
-    if (!note) {
-      // Log at info level and not error level for now to reduce Sentry noise
-      Logger.info({
-        ctx,
-        msg: `Note with fname ${fname} not found in engine! Skipping updated field FM modification.`,
-      });
-      return;
-    }
-
-    // Return undefined if document is missing frontmatter
-    if (!TextDocumentService.containsFrontmatter(event.document)) {
-      return;
-    }
-
-    const content = event.document.getText();
-    const match = NoteUtils.RE_FM_UPDATED.exec(content);
     let changes: TextEdit[] = [];
+    // eslint-disable-next-line  no-async-promise-executor
+    const promise = new Promise(async (resolve) => {
+      const note = (
+        await engine.findNotes({
+          fname,
+          vault: this._extension.wsUtils.getVaultFromUri(uri),
+        })
+      )[0];
+      // If we can't find the note, don't do anything
+      if (!note) {
+        // Log at info level and not error level for now to reduce Sentry noise
+        Logger.info({
+          ctx,
+          msg: `Note with fname ${fname} not found in engine! Skipping updated field FM modification.`,
+        });
+        return;
+      }
 
-    // update the `updated` time in frontmatter if it exists and content has changed
-    if (match && WorkspaceUtils.noteContentChanged({ content, note })) {
-      Logger.info({ ctx, match, msg: "update activeText editor" });
-      const startPos = event.document.positionAt(match.index);
-      const endPos = event.document.positionAt(match.index + match[0].length);
-      changes = [
-        TextEdit.replace(new Range(startPos, endPos), `updated: ${now}`),
-      ];
+      // Return undefined if document is missing frontmatter
+      if (!TextDocumentService.containsFrontmatter(event.document)) {
+        return;
+      }
+      const content = event.document.getText();
+      const match = NoteUtils.RE_FM_UPDATED.exec(content);
+      // update the `updated` time in frontmatter if it exists and content has changed
+      if (match && WorkspaceUtils.noteContentChanged({ content, note })) {
+        Logger.info({ ctx, match, msg: "update activeText editor" });
+        const startPos = event.document.positionAt(match.index);
+        const endPos = event.document.positionAt(match.index + match[0].length);
+        changes = [
+          TextEdit.replace(new Range(startPos, endPos), `updated: ${now}`),
+        ];
+      }
+      return resolve(changes);
+    });
+    event.waitUntil(promise);
 
-      // update the note in engine
-      // eslint-disable-next-line  no-async-promise-executor
-      const p = new Promise(async (resolve) => {
-        note.updated = now;
-        return resolve(changes);
-      });
-      event.waitUntil(p);
-    }
     return { changes };
+  }
+
+  private async onDidSaveNote(document: TextDocument) {
+    // check and prompt duplicate warning.
+    await DoctorUtils.findDuplicateNoteAndPromptIfNecessary(
+      document,
+      "onDidSaveNote"
+    );
+
+    const fname = path.basename(document.uri.fsPath, ".md");
+    const engine = this._extension.getEngine();
+    const config = this._extension.getDWorkspace().config;
+    const { enablePersistentHistory, mainVault } = ConfigUtils.getProp(
+      config,
+      "workspace"
+    );
+
+    if (
+      enablePersistentHistory &&
+      mainVault &&
+      !fname.startsWith("dendron.hist")
+    ) {
+      const date = Time.now().toFormat("y.MM.dd");
+      const historyFile = `dendron.hist.${date}`;
+      const minuteAndSecond = Time.now().toFormat("MM-dd-y HH:mm");
+      // check if file exists
+      // format line
+      const maybeVault = engine.vaults.find(
+        (vault) => VaultUtils.getName(vault) === mainVault
+      );
+      if (!maybeVault) {
+        Logger.error({
+          ctx: "onWillSaveNote",
+          msg: `could not find vault for history file. vault: ${mainVault}`,
+        });
+      } else {
+        const line = `- ${minuteAndSecond} : [[${fname}]]`;
+        const base = maybeVault.fsPath;
+        const fpath = path.join(engine.wsRoot, base, historyFile);
+        Logger.info({
+          ctx: "onDidSaveNote",
+          fpath,
+          line,
+          msg: "writing to history file",
+        });
+        if (!fs.existsSync(fpath)) {
+          const note = NoteUtils.create({
+            fname: historyFile,
+            vault: maybeVault,
+          });
+          await engine.writeNote(note, { runHooks: false });
+        }
+        fs.appendFileSync(fpath + ".md", "\n" + line);
+      }
+    }
   }
 
   /** Do not use this function, please go to `WindowWatcher.onFirstOpen() instead.`
@@ -378,6 +446,12 @@ export class WorkspaceWatcher {
       const files = args.files[0];
       const { vaults, wsRoot } = this._extension.getDWorkspace();
       const { oldUri, newUri } = files;
+
+      // No-op if we are not dealing with a Dendron note.
+      if (!NoteUtils.isNote(oldUri)) {
+        return;
+      }
+
       const oldVault = VaultUtils.getVaultByFilePath({
         vaults,
         wsRoot,
@@ -400,7 +474,7 @@ export class WorkspaceWatcher {
           fname: newFname,
           vaultName: VaultUtils.getName(newVault),
         },
-        isEventSourceEngine: false,
+        metaOnly: true,
       };
       AnalyticsUtils.track(ContextualUIEvents.ContextualUIRename);
       const engine = this._extension.getEngine();
@@ -427,6 +501,12 @@ export class WorkspaceWatcher {
       const fname = DNodeUtils.fname(newUri.fsPath);
       const engine = this._extension.getEngine();
       const { vaults, wsRoot } = this._extension.getDWorkspace();
+
+      // No-op if we are not dealing with a Dendron note.
+      if (!NoteUtils.isNote(newUri)) {
+        return;
+      }
+
       const newVault = VaultUtils.getVaultByFilePath({
         vaults,
         wsRoot,
@@ -434,13 +514,20 @@ export class WorkspaceWatcher {
       });
       const vpath = vault2Path({ wsRoot, vault: newVault });
       const newLocPath = path.join(vpath, fname + ".md");
-      const noteRaw = file2Note(newLocPath, newVault);
-      const newNote = NoteUtils.hydrate({
-        noteRaw,
-        noteHydrated: engine.notes[noteRaw.id],
-      });
+      const resp = file2Note(newLocPath, newVault);
+      if (ErrorUtils.isErrorResp(resp)) {
+        throw resp.error;
+      }
+      let newNote = resp.data;
+      const noteHydrated = await engine.getNote(newNote.id);
+      if (noteHydrated.data) {
+        newNote = NoteUtils.hydrate({
+          noteRaw: newNote,
+          noteHydrated: noteHydrated.data,
+        });
+      }
       newNote.title = NoteUtils.genTitle(fname);
-      await engine.writeNote(newNote, { updateExisting: true });
+      await engine.writeNote(newNote);
     } catch (error: any) {
       Sentry.captureException(error);
       throw error;

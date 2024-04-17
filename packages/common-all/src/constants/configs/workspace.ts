@@ -8,7 +8,7 @@ import {
   JournalConfig,
 } from "../../types/configs/workspace/journal";
 import { TaskConfig } from "../../types/configs/workspace/task";
-import { DendronWorkspaceConfig } from "../../types/configs/workspace/workspace";
+import { DendronWorkspaceConfig } from "../../types/configs/workspace/DendronWorkspaceConfig";
 import { DendronGraphConfig } from "../../types/configs/workspace/graph";
 import { ScratchConfig } from "../../types/configs/workspace/scratch";
 import { VAULT_SYNC_MODES } from "./base";
@@ -41,6 +41,10 @@ const GRAPH: DendronConfigEntryCollection<DendronGraphConfig> = {
   zoomSpeed: {
     label: "Zoom Speed",
     desc: "The speed at which the graph zooms in and out. Lower is slower, higher is faster.",
+  },
+  createStub: {
+    label: "Create Stub",
+    desc: "When enabled, create a note if it hasn't been created already when clicked on a graph node",
   },
 };
 
@@ -132,6 +136,10 @@ const TASK: DendronConfigEntryCollection<TaskConfig> = {
       return [key, value];
     })
   ),
+  taskCompleteStatus: {
+    label: "When is a task complete",
+    desc: "If the note state is set to any of these values, the note is considered to be done.",
+  },
 };
 
 export const WORKSPACE: DendronConfigEntryCollection<DendronWorkspaceConfig> = {
@@ -212,4 +220,20 @@ export const WORKSPACE: DendronConfigEntryCollection<DendronWorkspaceConfig> = {
     label: "Enable FullHierarchyNoteTitle mode",
     desc: "When enabled, the full hierarchy position of a note is used to generate the note title",
   },
+  metadataStore: {
+    label: "Storage engine for metadata",
+    desc: "values: sqlite|json",
+  },
+  enablePersistentHistory: {
+    label: "Enable Persistent History",
+    desc: "Enable storing history of notes saved to a separate file",
+  },
+  mainVault: {
+    label: "Main Vault",
+    desc: "Main vault",
+  },
+  enablePerfMode: {
+    label: "Enable Performance Mode",
+    desc: "Performance mode turns off features like backlink refresh to improve performance",
+  }
 };

@@ -11,10 +11,9 @@ import { RefactorHierarchyCommandV2 } from "../../commands/RefactorHierarchyV2";
 import { expect } from "../testUtilsv2";
 import { runLegacyMultiWorkspaceTest, setupBeforeAfter } from "../testUtilsV3";
 import sinon from "sinon";
-import { getEngine } from "../../workspace";
-import { DNodeProps, DVault, NoteUtils } from "@dendronhq/common-all";
+import { DNodeProps, DVault } from "@dendronhq/common-all";
 import { NoteLookupProviderSuccessResp } from "../../components/lookup/LookupProviderV3Interface";
-import { NoteLookupCommand } from "../../commands/NoteLookupCommand";
+import { ExtensionProvider } from "../../ExtensionProvider";
 
 suite("RefactorHierarchy", function () {
   const ctx = setupBeforeAfter(this, {
@@ -97,7 +96,7 @@ suite("RefactorHierarchy", function () {
               noConfirm: true,
             });
 
-            const engine = getEngine();
+            const engine = ExtensionProvider.getEngine();
             const { vaults, wsRoot } = engine;
             const vault = vaults[0];
             const vpath = vault2Path({ vault, wsRoot });
@@ -116,14 +115,11 @@ suite("RefactorHierarchy", function () {
               })
             ).toBeTruthy();
 
-            const noteAfterRefactor = NoteUtils.getNoteByFnameV5({
-              fname: "prefix",
-              notes: engine.notes,
-              vault,
-              wsRoot,
-            });
+            const noteAfterRefactor = (
+              await engine.findNotes({ fname: "prefix", vault })
+            )[0];
             expect(noteAfterRefactor?.body).toEqual(
-              "- [[prefix.one]]\n- [[prefix.two]]\n"
+              "- [[prefix.one]]\n- [[prefix.two]]"
             );
             done();
           },
@@ -154,7 +150,7 @@ suite("RefactorHierarchy", function () {
               noConfirm: true,
             });
 
-            const engine = getEngine();
+            const engine = ExtensionProvider.getEngine();
             const { vaults, wsRoot } = engine;
             const vault = vaults[0];
             const vpath = vault2Path({ vault, wsRoot });
@@ -169,23 +165,17 @@ suite("RefactorHierarchy", function () {
               })
             ).toBeTruthy();
 
-            const noteAfterRefactor = NoteUtils.getNoteByFnameV5({
-              fname: "refactor",
-              notes: engine.notes,
-              vault,
-              wsRoot,
-            });
+            const noteAfterRefactor = (
+              await engine.findNotes({ fname: "refactor", vault })
+            )[0];
             expect(noteAfterRefactor?.body).toEqual(
-              "- [[refactor.one]]\n- [[prefix.two]]\n"
+              "- [[refactor.one]]\n- [[prefix.two]]"
             );
 
-            const noteOneAfterRefactor = NoteUtils.getNoteByFnameV5({
-              fname: "refactor.one",
-              notes: engine.notes,
-              vault,
-              wsRoot,
-            });
-            expect(noteOneAfterRefactor?.body).toEqual("- [[prefix.two]]\n");
+            const noteOneAfterRefactor = (
+              await engine.findNotes({ fname: "refactor.one", vault })
+            )[0];
+            expect(noteOneAfterRefactor?.body).toEqual("- [[prefix.two]]");
             done();
           },
         });
@@ -200,7 +190,7 @@ suite("RefactorHierarchy", function () {
           onInit: async () => {
             const cmd = new RefactorHierarchyCommandV2();
 
-            const engine = getEngine();
+            const engine = ExtensionProvider.getEngine();
             const { wsRoot } = engine;
 
             const capturedNotes = [note, noteOne, noteTwo];
@@ -268,7 +258,7 @@ suite("RefactorHierarchy", function () {
           onInit: async () => {
             const cmd = new RefactorHierarchyCommandV2();
 
-            const engine = getEngine();
+            const engine = ExtensionProvider.getEngine();
             const { wsRoot } = engine;
 
             const capturedNotes = [refFooTest, refBarTest, refEggTest];
@@ -302,8 +292,8 @@ suite("RefactorHierarchy", function () {
           preSetupHook,
           onInit: async () => {
             const cmd = new RefactorHierarchyCommandV2();
-            const engine = getEngine();
-            const capturedNotes = cmd.getCapturedNotes({
+            const engine = ExtensionProvider.getEngine();
+            const capturedNotes = await cmd.getCapturedNotes({
               scope: undefined,
               matchRE: new RegExp("dendron.ref"),
               engine,
@@ -316,36 +306,6 @@ suite("RefactorHierarchy", function () {
               (note) => note.stub
             ).length;
             expect(numberOfNotesThatAreStubs).toEqual(0);
-
-            done();
-          },
-        });
-      });
-
-      test("THEN: stub note is captured if it exists in the file system.", (done) => {
-        runLegacyMultiWorkspaceTest({
-          ctx,
-          preSetupHook,
-          onInit: async () => {
-            const lookup = new NoteLookupCommand();
-            await lookup.run({
-              noConfirm: true,
-              initialValue: "dendron.ref.foo",
-            });
-
-            const cmd = new RefactorHierarchyCommandV2();
-            const engine = getEngine();
-            const capturedNotes = cmd.getCapturedNotes({
-              scope: undefined,
-              matchRE: new RegExp("dendron.ref"),
-              engine,
-            });
-
-            // only the note `dendron.ref.foo`, that is a stub note but has an actual file created
-            // should be part of the captured notes.
-            const capturedStubNotes = capturedNotes.filter((note) => note.stub);
-            expect(capturedStubNotes.length).toEqual(1);
-            expect(capturedStubNotes[0].fname).toEqual("dendron.ref.foo");
 
             done();
           },

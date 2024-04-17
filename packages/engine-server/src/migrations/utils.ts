@@ -1,4 +1,4 @@
-import { HierarchyConfig, LegacyHierarchyConfig } from "@dendronhq/common-all";
+import { HierarchyConfig } from "@dendronhq/common-all";
 import _ from "lodash";
 import { MigrationChangeSetStatus } from "./types";
 
@@ -200,7 +200,7 @@ export const PATH_MAP = new Map<string, mappedConfigPath>([
     "publishing.hierarchy",
     {
       target: "site.config",
-      iteratee: (hconfig: LegacyHierarchyConfig) => {
+      iteratee: (hconfig: HierarchyConfig) => {
         const tmp = {} as HierarchyConfig;
         _.forEach(_.keys(hconfig), (key: string) => {
           _.set(tmp, key, _.omit(_.get(hconfig, key), "noindexByDefault"));
@@ -234,7 +234,7 @@ export const PATH_MAP = new Map<string, mappedConfigPath>([
   ["publishing.enablePrettyLinks", { target: "site.usePrettyLinks" }],
 ]);
 
-/**
+/** ^2hgqigv11pvy
  * List of config paths that are deprecated
  * and should be checked for existence
  * and deleted from `dendron.yml`
@@ -247,6 +247,12 @@ export const DEPRECATED_PATHS = [
   "site.previewPort",
   "site.useContainers",
   "site.generateChangelog",
+  "dev.enableWebUI",
+  "workspace.enableHandlebarTemplates",
+  "workspace.enableSmartRefs",
+  "preview.enableMermaid",
+  "enableMermaid",
+  "publishing.enableMermaid",
 ];
 
 export class MigrationUtils {

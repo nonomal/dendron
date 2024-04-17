@@ -1,23 +1,30 @@
 import {
   DNodeUtils,
   DVault,
+  FOLDERS,
   genUUIDInsecure,
   NoteProps,
   NoteUtils,
   VaultUtils,
 } from "@dendronhq/common-all";
-import { cleanFileName, readMD, vault2Path } from "@dendronhq/common-server";
+import {
+  cleanFileName,
+  DConfig,
+  readMD,
+  vault2Path,
+} from "@dendronhq/common-server";
 import {
   DendronASTDest,
   DendronASTNode,
   DendronASTTypes,
+  getParsingDependencyDicts,
   Image,
   Link,
   MDUtilsV5,
   RemarkUtils,
   selectAll,
   WikiLinkNoteV4,
-} from "@dendronhq/engine-server";
+} from "@dendronhq/unified";
 import fs from "fs-extra";
 import klaw, { Item } from "klaw";
 import _ from "lodash";
@@ -472,10 +479,13 @@ export class MarkdownImportPod extends ImportPod<MarkdownImportPodConfig> {
           const noteDirlevel = note.fname.split(".").length;
           const siblingNotes = hDict[noteDirlevel];
           const proc = MDUtilsV5.procRemarkFull({
-            engine,
+            noteToRender: note,
             fname: note.fname,
             vault: note.vault,
+            vaults: engine.vaults,
             dest: DendronASTDest.MD_DENDRON,
+            config: DConfig.readConfigSync(engine.wsRoot),
+            wsRoot: engine.wsRoot,
           });
 
           const tree = proc.parse(note.body) as DendronASTNode;
@@ -503,7 +513,7 @@ export class MarkdownImportPod extends ImportPod<MarkdownImportPodConfig> {
           return note;
         })
     );
-    await engine.bulkAddNotes({ notes: notesClean });
+    await engine.bulkWriteNotes({ notes: notesClean, skipMetadata: true });
     this.L.info({
       ctx,
       wsRoot,
@@ -539,15 +549,35 @@ export class MarkdownPublishPod extends PublishPod<MarkdownPublishPodConfig> {
   async plant(opts: PublishPodPlantOpts) {
     const { engine, note, config, dendronConfig } = opts;
     const { wikiLinkToURL = false } = config;
+
+    const noteCacheForRenderDict = await getParsingDependencyDicts(
+      note,
+      engine,
+      config,
+      engine.vaults
+    );
+
+    const rawConfig = DConfig.readConfigSync(engine.wsRoot);
+
     let remark = MDUtilsV5.procRemarkFull({
+      noteToRender: note,
+      noteCacheForRenderDict,
       dest: DendronASTDest.MD_REGULAR,
       config: {
-        ...engine.config,
-        usePrettyRefs: false,
+        ...rawConfig,
+        preview: {
+          ...rawConfig.preview,
+          enablePrettyRefs: false,
+        },
+        publishing: {
+          ...rawConfig.publishing,
+          enablePrettyRefs: false,
+        },
       },
-      engine,
       fname: note.fname,
       vault: note.vault,
+      vaults: engine.vaults,
+      wsRoot: engine.wsRoot,
     });
     if (wikiLinkToURL && !_.isUndefined(dendronConfig)) {
       remark = remark.use(
@@ -556,7 +586,7 @@ export class MarkdownPublishPod extends PublishPod<MarkdownPublishPodConfig> {
     } else {
       remark = remark.use(RemarkUtils.convertLinksFromDotNotation(note, []));
     }
-    const out = remark.processSync(note.body).toString();
+    const out = (await remark.process(note.body)).toString();
     return _.trim(out);
   }
 }
@@ -602,16 +632,15 @@ export class MarkdownExportPod extends ExportPod {
     // Export Assets
     await Promise.all(
       vaults.map(async (vault) => {
-        //TODO: Avoid hardcoding of assets directory, or else extract to global const
         const destPath = path.join(
           dest.fsPath,
           VaultUtils.getRelPath(vault),
-          "assets"
+          FOLDERS.ASSETS
         );
         const srcPath = path.join(
           wsRoot,
           VaultUtils.getRelPath(vault),
-          "assets"
+          FOLDERS.ASSETS
         );
         if (fs.pathExistsSync(srcPath)) {
           await fs.copy(srcPath, destPath);

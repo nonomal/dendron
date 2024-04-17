@@ -8,6 +8,7 @@ import {
   Spin,
   Tooltip,
   Button,
+  Radio,
 } from "antd";
 import { MenuUnfoldOutlined, MenuFoldOutlined } from "@ant-design/icons";
 import _ from "lodash";
@@ -15,6 +16,14 @@ import { useState } from "react";
 import { GraphConfig, GraphConfigItem } from "../utils/graph";
 import AntThemes from "../styles/theme-antd";
 import { useCurrentTheme } from "../hooks";
+import { postVSCodeMessage } from "../utils/vscode";
+import {
+  DMessageSource,
+  GraphThemeEnum,
+  GraphViewMessage,
+  GraphViewMessageEnum,
+} from "@dendronhq/common-all";
+import { ideHooks, ideSlice } from "@dendronhq/common-frontend";
 
 const { Panel } = Collapse;
 
@@ -23,12 +32,16 @@ type FilterProps = {
   config: GraphConfig;
   updateConfigField: (key: string, value: string | number | boolean) => void;
   isGraphReady: boolean;
+  customCSS?: string;
+  type?: "note" | "schema";
 };
 
 const GraphFilterView = ({
   config,
   updateConfigField,
   isGraphReady,
+  customCSS,
+  type,
 }: FilterProps) => {
   const [showView, setShowView] = useState(false);
   const { currentTheme } = useCurrentTheme();
@@ -104,6 +117,16 @@ const GraphFilterView = ({
             updateConfigField={updateConfigField}
           />
         </Panel>
+        {type === "note" && (
+          <Panel header="Graph Theme" key="graphTheme">
+            <FilterViewSection
+              section="graphTheme"
+              config={config}
+              updateConfigField={updateConfigField}
+              customCSS={customCSS}
+            />
+          </Panel>
+        )}
       </Collapse>
     </Space>
   );
@@ -165,14 +188,17 @@ const FilterViewStringInput = ({
   );
 };
 
+//TODO: either make this more generic or split it into multiple components.
 const FilterViewSection = ({
   section,
   config,
   updateConfigField,
+  customCSS,
 }: {
   section: string;
   config: GraphConfig;
   updateConfigField: (key: string, value: string | number | boolean) => void;
+  customCSS?: string;
 }) => {
   return (
     <Space direction="vertical" style={{ width: "100%" }}>
@@ -193,6 +219,24 @@ const FilterViewSection = ({
               style={{ justifyContent: "space-between", width: "100%" }}
               key={key}
             >
+              {_.isString(entry.value) && entry.singleSelect && (
+                <>
+                  <RadioButton
+                    value={entry.value as GraphThemeEnum}
+                    customCSS={customCSS}
+                  />
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={configureCustomStyling}
+                    style={{
+                      transform: "0.2s opacity ease-in-out",
+                    }}
+                  >
+                    {customCSS ? "Modify custom css" : "Create Your Own"}
+                  </Button>
+                </>
+              )}
               {_.isBoolean(entry?.value) && (
                 <>
                   <Typography>{label}</Typography>
@@ -203,19 +247,37 @@ const FilterViewSection = ({
                   />
                 </>
               )}
-              {_.isNumber(entry?.value) && (
-                <>
-                  <Typography>{label}</Typography>
-                  <InputNumber
-                    value={entry?.value}
-                    onChange={(newValue) => updateConfigField(key, newValue)}
-                    disabled={!entry?.mutable}
-                  />
-                </>
-              )}
+              {entry.label === config["filter.depth"].label &&
+                config["options.show-local-graph"]?.value && (
+                  <>
+                    <Typography>{label}</Typography>
+                    <InputNumber
+                      min={1}
+                      max={3}
+                      disabled={!entry.mutable}
+                      defaultValue={(entry.value as number) || 1}
+                      onChange={(newValue) => {
+                        updateConfigField(key, newValue);
+                        updateGraphDepth(newValue as number);
+                      }}
+                    />
+                  </>
+                )}
+              {_.isNumber(entry?.value) &&
+                entry.label !== config["filter.depth"].label && (
+                  <>
+                    <Typography>{label}</Typography>
+                    <InputNumber
+                      value={entry?.value}
+                      onChange={(newValue) => updateConfigField(key, newValue)}
+                      disabled={!entry?.mutable}
+                    />
+                  </>
+                )}
               {_.isString(entry?.value) &&
                 !_.isUndefined(entry) &&
-                !_.isUndefined(key) && (
+                !_.isUndefined(key) &&
+                !entry.singleSelect && (
                   <>
                     <FilterViewStringInput
                       fieldKey={key}
@@ -231,6 +293,74 @@ const FilterViewSection = ({
         })}
     </Space>
   );
+};
+
+const RadioButton = ({
+  value,
+  customCSS,
+}: {
+  value: GraphThemeEnum;
+  customCSS?: string;
+}) => {
+  let singleSelectOptions = Object.keys(GraphThemeEnum).map(
+    (k) => GraphThemeEnum[k as GraphThemeEnum]
+  );
+  if (!customCSS) {
+    singleSelectOptions = singleSelectOptions.filter(
+      (option) => option !== GraphThemeEnum.Custom
+    );
+  }
+  const ideDispatch = ideHooks.useIDEAppDispatch();
+  return (
+    <Radio.Group
+      onChange={(e) => {
+        updateGraphTheme(e.target.value);
+        ideDispatch(ideSlice.actions.setGraphTheme(e.target.value));
+      }}
+      value={value}
+    >
+      <Space direction="vertical">
+        {singleSelectOptions.map((option) => (
+          <Radio key={option} value={option}>
+            {option}
+          </Radio>
+        ))}
+      </Space>
+    </Radio.Group>
+  );
+};
+
+/**
+ * vscode message to update graphTheme selected by User.
+ * When the graph panel is disposed, this value is written back to Metadata Service.
+ * @param graphTheme
+ */
+const updateGraphTheme = (graphTheme: GraphThemeEnum) => {
+  postVSCodeMessage({
+    type: GraphViewMessageEnum.onGraphThemeChange,
+    data: { graphTheme },
+    source: DMessageSource.webClient,
+  } as GraphViewMessage);
+};
+
+const configureCustomStyling = () => {
+  postVSCodeMessage({
+    type: GraphViewMessageEnum.configureCustomStyling,
+    source: DMessageSource.webClient,
+  } as GraphViewMessage);
+};
+
+/**
+ * vscode message to update graphDepth selected by User.
+ * When the graph panel is disposed, this value is written back to Metadata Service.
+ * @param graphDepth
+ */
+const updateGraphDepth = (graphDepth: number) => {
+  postVSCodeMessage({
+    type: GraphViewMessageEnum.onGraphDepthChange,
+    data: { graphDepth },
+    source: DMessageSource.webClient,
+  } as GraphViewMessage);
 };
 
 export default GraphFilterView;

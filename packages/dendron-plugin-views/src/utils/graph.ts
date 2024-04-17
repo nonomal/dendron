@@ -1,4 +1,5 @@
 import { EdgeDefinition, NodeDefinition } from "cytoscape";
+import { GraphThemeEnum } from "@dendronhq/common-all";
 
 export type GraphNodes = NodeDefinition[];
 export type GraphEdges = {
@@ -15,6 +16,7 @@ export type GraphConfigItem<T> = {
   label?: string;
   color?: string;
   placeholder?: string;
+  singleSelect?: boolean;
 };
 
 export type CoreGraphConfig = {
@@ -28,6 +30,9 @@ export type CoreGraphConfig = {
 
   "options.allow-relayout": GraphConfigItem<boolean>;
   "options.show-labels": GraphConfigItem<boolean>;
+  "filter.depth": GraphConfigItem<number>;
+
+  graphTheme: GraphConfigItem<GraphThemeEnum>;
 };
 
 export type NoteGraphConfig = {
@@ -80,11 +85,21 @@ const coreGraphConfig: CoreGraphConfig = {
     value: true,
     mutable: true,
   },
+  graphTheme: {
+    value: GraphThemeEnum.Classic,
+    mutable: true,
+    singleSelect: true,
+  },
+  "filter.depth": {
+    value: 1,
+    mutable: true,
+    label: "Depth",
+  },
 };
 
 const noteGraphConfig: NoteGraphConfig = {
   "connections.links": {
-    value: true,
+    value: false,
     mutable: true,
   },
   "information.edges-links": {
@@ -96,7 +111,7 @@ const noteGraphConfig: NoteGraphConfig = {
     mutable: true,
   },
   "options.show-local-graph": {
-    value: true,
+    value: false,
     mutable: true,
   },
 };

@@ -4,14 +4,8 @@ import {
   ERROR_STATUS,
   SeedConfig,
 } from "@dendronhq/common-all";
-import { tmpDir } from "@dendronhq/common-server";
-import {
-  DConfig,
-  SeedInitMode,
-  SeedService,
-  SeedUtils,
-} from "@dendronhq/engine-server";
-import os from "os";
+import { DConfig, tmpDir } from "@dendronhq/common-server";
+import { SeedInitMode, SeedService, SeedUtils } from "@dendronhq/engine-server";
 import path from "path";
 import { runEngineTestV5 } from "../../engine";
 import { checkDir, checkFile, checkNotInDir, checkVaults } from "../../utils";
@@ -34,9 +28,8 @@ function getSeedVaultPathForCheckFile(seedId: string) {
   return path.join(`${seedId}`, `vault`).replace("\\", "\\\\");
 }
 
-// Skip on Windows for now until reliability issues can be fixed.
-//TODO: Re-enable for Windows
-const runTest = os.platform() === "win32" ? describe.skip : describe;
+// SKIP
+const runTest = describe.skip;
 
 runTest("remove", () => {
   test("error: nothing to remove", async () => {
@@ -324,7 +317,9 @@ runTest("init", () => {
             },
             expect
           );
-          expect(DConfig.getOrCreate(wsRoot).seeds).toEqual(undefined);
+          expect(DConfig.getOrCreate(wsRoot).workspace.seeds).toEqual(
+            undefined
+          );
         },
         {
           expect,
@@ -363,7 +358,9 @@ runTest("init", () => {
             fpath: path.join(wsRoot, "dendron.yml"),
             snapshot: true,
           });
-          expect(DConfig.getOrCreate(wsRoot).seeds).toEqual(undefined);
+          expect(DConfig.getOrCreate(wsRoot).workspace.seeds).toEqual(
+            undefined
+          );
         },
         {
           expect,

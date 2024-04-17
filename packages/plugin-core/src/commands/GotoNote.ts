@@ -1,13 +1,21 @@
 import {
   assertUnreachable,
   Awaited,
+  BacklinkUtils,
+  ConfigUtils,
   DNoteAnchorBasic,
   getSlugger,
+  InvalidFilenameReason,
   NoteProps,
+  NotePropsMeta,
   NoteUtils,
   VaultUtils,
 } from "@dendronhq/common-all";
-import { ExtensionUtils, findNonNoteFile } from "@dendronhq/common-server";
+import {
+  FileExtensionUtils,
+  findNonNoteFile,
+  TemplateUtils,
+} from "@dendronhq/common-server";
 import _ from "lodash";
 import path from "path";
 import { Position, Selection, Uri, window } from "vscode";
@@ -15,11 +23,12 @@ import { VaultSelectionMode } from "../components/lookup/types";
 import { PickerUtilsV2 } from "../components/lookup/utils";
 import { DENDRON_COMMANDS } from "../constants";
 import { IDendronExtension } from "../dendronExtensionInterface";
-import { ExtensionProvider } from "../ExtensionProvider";
 import { getAnalyticsPayload } from "../utils/analytics";
+import { EditorUtils } from "../utils/EditorUtils";
 import { PluginFileUtils } from "../utils/files";
-import { getReferenceAtPosition } from "../utils/md";
+import { maybeSendMeetingNoteTelemetry } from "../utils/MeetingTelemHelper";
 import { VSCodeUtils } from "../vsCodeUtils";
+import { WSUtilsV2 } from "../WSUtilsV2";
 import { IWSUtilsV2 } from "../WSUtilsV2Interface";
 import { BasicCommand } from "./base";
 import {
@@ -31,7 +40,7 @@ import {
 
 export const findAnchorPos = (opts: {
   anchor: DNoteAnchorBasic;
-  note: NoteProps;
+  note: NotePropsMeta;
 }): Position => {
   const { anchor: findAnchor, note } = opts;
   let key: string;
@@ -55,7 +64,7 @@ export const findAnchorPos = (opts: {
 };
 
 type FoundLinkSelection = NonNullable<
-  Awaited<ReturnType<GotoNoteCommand["getLinkFromSelection"]>>
+  Awaited<ReturnType<typeof EditorUtils.getLinkFromSelectionWithWorkspace>>
 >;
 
 /**
@@ -75,44 +84,16 @@ export class GotoNoteCommand extends BasicCommand<
     this.wsUtils = extension.wsUtils;
   }
 
-  async getLinkFromSelection() {
-    const { selection, editor } = VSCodeUtils.getSelection();
-    if (
-      _.isEmpty(selection) ||
-      _.isUndefined(selection) ||
-      _.isUndefined(selection.start) ||
-      !editor
-    )
-      return;
-    const currentLine = editor.document.lineAt(selection.start.line).text;
-    if (!currentLine) return;
-    const { wsRoot, vaults } = ExtensionProvider.getDWorkspace();
-    const reference = await getReferenceAtPosition({
-      document: editor.document,
-      position: selection.start,
-      opts: { allowInCodeBlocks: true },
-      wsRoot,
-      vaults,
-    });
-    if (!reference) return;
-    return {
-      alias: reference?.label,
-      value: reference?.ref,
-      vaultName: reference?.vaultName,
-      anchorHeader: reference.anchorStart,
-    };
-  }
-
-  private getQs(
+  private async getQs(
     opts: GoToNoteCommandOpts,
     link: FoundLinkSelection
-  ): GoToNoteCommandOpts {
+  ): Promise<GoToNoteCommandOpts> {
     if (link.value) {
       // Reference to another file
       opts.qs = link.value;
     } else {
       // Same file block reference, implicitly current file
-      const note = this.wsUtils.getActiveNote();
+      const note = await this.wsUtils.getActiveNote();
       if (note) {
         // Same file link within note
         opts.qs = note.fname;
@@ -136,10 +117,9 @@ export class GotoNoteCommand extends BasicCommand<
 
   private async maybeSetOptsFromExistingNote(opts: GoToNoteCommandOpts) {
     const engine = this.extension.getEngine();
-    const notes = NoteUtils.getNotesByFnameFromEngine({
-      fname: opts.qs!,
-      engine,
-    });
+    const notes = (await engine.findNotesMeta({ fname: opts.qs })).filter(
+      (note) => !note.id.startsWith(NoteUtils.FAKE_ID_PREFIX)
+    );
     if (notes.length === 1) {
       // There's just one note, so that's the one we'll go with.
       opts.vault = notes[0].vault;
@@ -173,8 +153,10 @@ export class GotoNoteCommand extends BasicCommand<
   private async setOptsFromNewNote(opts: GoToNoteCommandOpts) {
     // Depending on the config, we can either
     // automatically pick the vault or we'll prompt for it.
+    const { config } = this.extension.getDWorkspace();
     const confirmVaultSetting =
-      this.extension.getDWorkspace().config["lookupConfirmVaultOnCreate"];
+      ConfigUtils.getLookup(config).note.confirmVaultOnCreate;
+
     const selectionMode =
       confirmVaultSetting !== true
         ? VaultSelectionMode.smart
@@ -192,6 +174,9 @@ export class GotoNoteCommand extends BasicCommand<
       return null;
     }
     opts.vault = selectedVault;
+
+    // this is needed to populate the new note's backlink after it is created
+    opts.originNote = await this.wsUtils.getActiveNote();
     return opts;
   }
 
@@ -204,14 +189,14 @@ export class GotoNoteCommand extends BasicCommand<
       return opts;
     }
 
-    const link = await this.getLinkFromSelection();
+    const link = await EditorUtils.getLinkFromSelectionWithWorkspace();
     if (!link) {
       window.showErrorMessage("selection is not a valid link");
       return null;
     }
 
     // Get missing opts from the selected link, if possible
-    if (!opts.qs) opts = this.getQs(opts, link);
+    if (!opts.qs) opts = await this.getQs(opts, link);
     if (!opts.vault && link.vaultName)
       opts.vault = VaultUtils.getVaultByNameOrThrow({
         vaults: this.extension.getDWorkspace().vaults,
@@ -266,7 +251,7 @@ export class GotoNoteCommand extends BasicCommand<
     // Non-note files use `qs` for full path, and set vault to null
     if (opts.kind === TargetKind.NON_NOTE && qs) {
       let type: GotoFileType;
-      if (ExtensionUtils.isTextFileExtension(path.extname(qs))) {
+      if (FileExtensionUtils.isTextFileExtension(path.extname(qs))) {
         // Text file, open inside of VSCode
         type = GotoFileType.TEXT;
         const editor = await VSCodeUtils.openFileInEditor(
@@ -303,13 +288,63 @@ export class GotoNoteCommand extends BasicCommand<
     let pos: undefined | Position;
     const out = await this.extension.pauseWatchers<GoToNoteCommandOutput>(
       async () => {
-        const { data } = await client.getNoteByPath({
-          npath: qs,
-          createIfNew: true,
-          vault,
-          overrides,
-        });
-        const note = data?.note as NoteProps;
+        const notes = await client.findNotes({ fname: qs, vault });
+        let note: NoteProps;
+
+        // If note doesn't exist, create note with schema
+        if (notes.length === 0) {
+          const fname = qs;
+          // validate fname before creating new note
+          const validationResp = NoteUtils.validateFname(fname);
+          if (validationResp.isValid) {
+            const newNote = await NoteUtils.createWithSchema({
+              noteOpts: {
+                fname,
+                vault,
+              },
+              engine: client,
+            });
+            await TemplateUtils.findAndApplyTemplate({
+              note: newNote,
+              engine: client,
+              pickNote: async (choices: NoteProps[]) => {
+                return WSUtilsV2.instance().promptForNoteAsync({
+                  notes: choices,
+                  quickpickTitle:
+                    "Select which template to apply or press [ESC] to not apply a template",
+                  nonStubOnly: true,
+                });
+              },
+            });
+            note = _.merge(newNote, overrides || {});
+            const { originNote } = opts;
+            if (originNote) {
+              this.addBacklinkPointingToOrigin({
+                originNote,
+                note,
+              });
+            }
+            await client.writeNote(note);
+
+            // check if we should send meeting note telemetry.
+            const type = qs.startsWith("user.") ? "userTag" : "general";
+            maybeSendMeetingNoteTelemetry(type);
+          } else {
+            // should not create note if fname is invalid.
+            // let the user know and exit early.
+            this.displayInvalidFilenameError({ fname, validationResp });
+            return;
+          }
+        } else {
+          note = notes[0];
+          // If note exists and its a stub note, delete stub and create new note
+          if (note.stub) {
+            delete note.stub;
+            note = _.merge(note, overrides || {});
+            await client.writeNote(note);
+          }
+        }
+
         const npath = NoteUtils.getFullPath({
           note,
           wsRoot,
@@ -341,5 +376,38 @@ export class GotoNoteCommand extends BasicCommand<
     };
     const payload = { ...getAnalyticsPayload(source), fileType: type };
     return payload;
+  }
+
+  private displayInvalidFilenameError(opts: {
+    fname: string;
+    validationResp: {
+      isValid: boolean;
+      reason: InvalidFilenameReason;
+    };
+  }) {
+    const { fname, validationResp } = opts;
+    const message = `Cannot create note ${fname}: ${validationResp.reason}`;
+    window.showErrorMessage(message);
+  }
+
+  /**
+   * Given an origin note and a newly created note,
+   * add a backlink that points to the origin note
+   * to newly created note's link metadata
+   */
+  private addBacklinkPointingToOrigin(opts: {
+    originNote: NoteProps;
+    note: NoteProps;
+  }) {
+    const { originNote, note } = opts;
+    const originLinks = originNote.links;
+
+    const linkToNote = originLinks.find(
+      (link) => link.to?.fname === note.fname
+    );
+    if (linkToNote) {
+      const backlinkToOrigin = BacklinkUtils.createFromDLink(linkToNote);
+      if (backlinkToOrigin) note.links.push(backlinkToOrigin);
+    }
   }
 }

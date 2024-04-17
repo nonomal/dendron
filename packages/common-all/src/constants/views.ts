@@ -25,40 +25,45 @@ export enum DendronEditorViewKey {
 export enum DendronTreeViewKey {
   SAMPLE_VIEW = "dendron.sample",
   TREE_VIEW = "dendron.treeView",
-  /** @deprecated: We will be deprecating treeview v2 and going back to v1 **/
-  TREE_VIEW_V2 = "dendron.tree-view",
   BACKLINKS = "dendron.backlinks",
   CALENDAR_VIEW = "dendron.calendar-view",
   LOOKUP_VIEW = "dendron.lookup-view",
+  TIP_OF_THE_DAY = "dendron.tip-of-the-day",
+  HELP_AND_FEEDBACK = "dendron.help-and-feedback",
+  GRAPH_PANEL = "dendron.graph-panel",
+  RECENT_WORKSPACES = "dendron.recent-workspaces",
 }
 
 export const EDITOR_VIEWS: Record<DendronEditorViewKey, DendronViewEntry> = {
   [DendronEditorViewKey.NOTE_PREVIEW]: {
     desc: "Note Preview",
     label: "Note Preview",
-    bundleName: "notePreview",
+    bundleName: "DendronNotePreview",
     type: "webview",
   },
   [DendronEditorViewKey.CONFIGURE]: {
-    desc: "TODO",
-    label: "TODO",
-    type: "nativeview",
+    desc: "Dendron Configuration",
+    label: "Dendron Configuration",
+    bundleName: "DendronConfigure",
+    type: "webview",
   },
   [DendronEditorViewKey.NOTE_GRAPH]: {
     desc: "Note Graph",
     label: "Note Graph",
-    bundleName: "graphView",
+    bundleName: "DendronGraphPanel",
     type: "webview",
   },
   [DendronEditorViewKey.SCHEMA_GRAPH]: {
-    desc: "TODO",
-    label: "TODO",
-    type: "nativeview",
+    desc: "Schema Graph",
+    label: "Schema Graph",
+    bundleName: "DendronSchemaGraphPanel",
+    type: "webview",
   },
   [DendronEditorViewKey.SEED_BROWSER]: {
-    desc: "TODO",
-    label: "TODO",
-    type: "nativeview",
+    desc: "Seed Registry",
+    label: "Seed Registry",
+    bundleName: "SeedBrowser",
+    type: "webview",
   },
 };
 
@@ -66,16 +71,10 @@ export const EDITOR_VIEWS: Record<DendronEditorViewKey, DendronViewEntry> = {
  * Value is the name of webpack bundle for webview based tree views
  */
 export const TREE_VIEWS: Record<DendronTreeViewKey, DendronViewEntry> = {
-  [DendronTreeViewKey.TREE_VIEW_V2]: {
-    desc: "Tree View",
-    label: "Tree View",
-    bundleName: "treePanelView",
-    type: "webview",
-  },
   [DendronTreeViewKey.SAMPLE_VIEW]: {
     desc: "A view used for prototyping",
     label: "Sample View",
-    bundleName: "TODO",
+    bundleName: "SampleComponent",
     type: "webview",
   },
   [DendronTreeViewKey.TREE_VIEW]: {
@@ -92,13 +91,35 @@ export const TREE_VIEWS: Record<DendronTreeViewKey, DendronViewEntry> = {
     desc: "Calendar View",
     label: "Calendar View",
     type: "webview",
-    bundleName: "TODO",
+    bundleName: "DendronCalendarPanel",
   },
   [DendronTreeViewKey.LOOKUP_VIEW]: {
     desc: "Lookup View",
     label: "Lookup View",
     type: "webview",
-    bundleName: "LookupPanelView",
+    bundleName: "DendronLookupPanel",
+  },
+  [DendronTreeViewKey.TIP_OF_THE_DAY]: {
+    desc: "Feature Showcase",
+    label: "Feature Showcase",
+    type: "webview",
+    bundleName: "DendronTipOfTheDay",
+  },
+  [DendronTreeViewKey.RECENT_WORKSPACES]: {
+    desc: "Recent Dendron Workspaces",
+    label: "Recent Dendron Workspaces",
+    type: "nativeview",
+  },
+  [DendronTreeViewKey.HELP_AND_FEEDBACK]: {
+    desc: "Help and Feedback",
+    label: "Help and Feedback",
+    type: "nativeview",
+  },
+  [DendronTreeViewKey.GRAPH_PANEL]: {
+    desc: "Graph Panel (side)",
+    label: "Graph Panel",
+    bundleName: "DendronSideGraphPanel",
+    type: "webview",
   },
 };
 
@@ -131,3 +152,10 @@ export const getWebEditorViewEntry = (
     message: `${key} is not valid webview key`,
   });
 };
+
+export enum BacklinkPanelSortOrder {
+  /** Using path sorted so order with shallow first = true */
+  PathNames = "PathNames",
+
+  LastUpdated = "LastUpdated",
+}

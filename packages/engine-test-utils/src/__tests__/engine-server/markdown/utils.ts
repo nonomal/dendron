@@ -1,9 +1,11 @@
 import {
-  IntermediateDendronConfig,
+  DendronConfig,
   DEngineClient,
-  DuplicateNoteActionEnum,
   DVault,
+  NoteDictsUtils,
+  NoteProps,
 } from "@dendronhq/common-all";
+import { DConfig } from "@dendronhq/common-server";
 import {
   AssertUtils,
   RunEngineTestFunctionV4,
@@ -12,11 +14,13 @@ import {
 import {
   DendronASTData,
   DendronASTDest,
+  getParsingDependencyDicts,
   MDUtilsV5,
+  ProcDataFullOptsV5,
   Processor,
   ProcFlavor,
   VFile,
-} from "@dendronhq/engine-server";
+} from "@dendronhq/unified";
 import fs from "fs-extra";
 import _ from "lodash";
 import path from "path";
@@ -55,19 +59,50 @@ export async function checkNotInVFile(resp: VFile, ...nomatch: string[]) {
   ).toBeTruthy();
 }
 
-export const createProcForTest = (opts: {
+export const createProcForTest = async (opts: {
   engine: DEngineClient;
   dest: DendronASTDest;
   vault: DVault;
+  config: DendronConfig;
   fname?: string;
   useIdAsLink?: boolean;
+  parsingDependenciesByFname?: string[];
+  parsingDependenciesByNoteProps?: NoteProps[];
 }) => {
-  const { engine, dest, vault, fname } = opts;
+  const { engine, dest, vault, fname, config, parsingDependenciesByFname } =
+    opts;
   // This was false by default for MDUtilsV4, but became true for MDUtilsV5.
   // Using IDs for the links breaks snapshots since note ids are random.
   if (opts.useIdAsLink === undefined) opts.useIdAsLink = false;
-  const data = {
+
+  const noteToRender = (
+    await engine.findNotes({ fname: fname || "root", vault })
+  )[0];
+  const noteCacheForRenderDict = await getParsingDependencyDicts(
+    noteToRender,
     engine,
+    config,
+    engine.vaults
+  );
+  if (parsingDependenciesByFname) {
+    await Promise.all(
+      parsingDependenciesByFname.map(async (dep) => {
+        (await engine.findNotes({ fname: dep })).forEach((noteProps) => {
+          NoteDictsUtils.add(noteProps, noteCacheForRenderDict);
+        });
+      })
+    );
+  }
+
+  if (opts.parsingDependenciesByNoteProps) {
+    opts.parsingDependenciesByNoteProps.map((dep) => {
+      NoteDictsUtils.add(dep, noteCacheForRenderDict);
+    });
+  }
+
+  const data = {
+    noteToRender,
+    noteCacheForRenderDict,
     dest,
     fname: fname || "root",
     vault,
@@ -79,6 +114,8 @@ export const createProcForTest = (opts: {
         useId: opts.useIdAsLink,
       },
     },
+    config: DConfig.readConfigSync(engine.wsRoot),
+    vaults: engine.vaults,
   };
   if (dest === DendronASTDest.HTML) {
     return MDUtilsV5.procRehypeFull(data);
@@ -99,6 +136,7 @@ export const cleanVerifyOpts = (opts: any): ProcVerifyOpts => {
 };
 
 /**
+ * @deprecated - use {@link createProcCompileTests} instead
  * Generator for processor tests
  *
  * @param name name of test
@@ -170,6 +208,9 @@ export const createProcCompileTests = (opts: {
     [key in DendronASTDest]?: FlavorDict;
   };
   preSetupHook?: TestPresetEntryV4["preSetupHook"];
+  procOpts?: Partial<ProcDataFullOptsV5>;
+  parsingDependenciesByFname?: string[];
+  parsingDependenciesByNoteProps?: NoteProps[];
 }): ProcTests[] => {
   const {
     name,
@@ -212,23 +253,65 @@ export const createProcCompileTests = (opts: {
             flavor,
             testCase: new TestPresetEntryV4(
               async (presetOpts) => {
-                const { engine, vaults } = presetOpts;
+                const { wsRoot, vaults: optsVaults, engine } = presetOpts;
+                const config = DConfig.readConfigSync(wsRoot);
+                const vaults = config.workspace.vaults ?? optsVaults;
                 const vault = vaults[0];
                 let proc: Processor;
+                const noteToRender = (
+                  await engine.findNotes({ fname, vault })
+                )[0];
+                const noteCacheForRenderDict = await getParsingDependencyDicts(
+                  noteToRender,
+                  engine,
+                  config,
+                  vaults
+                );
+
+                if (opts.parsingDependenciesByFname) {
+                  await Promise.all(
+                    opts.parsingDependenciesByFname.map(async (dep) => {
+                      NoteDictsUtils.add(
+                        (await engine.getNote(dep)).data!,
+                        noteCacheForRenderDict
+                      );
+                    })
+                  );
+                }
+
+                if (opts.parsingDependenciesByNoteProps) {
+                  opts.parsingDependenciesByNoteProps.map(async (dep) => {
+                    NoteDictsUtils.add(dep, noteCacheForRenderDict);
+                  });
+                }
+
                 switch (dest) {
                   case DendronASTDest.HTML:
                     proc = MDUtilsV5.procRehypeFull(
-                      { engine, fname, vault },
+                      {
+                        fname,
+                        vault,
+                        config,
+                        noteToRender,
+                        noteCacheForRenderDict,
+                        vaults,
+                        wsRoot,
+                      },
                       { flavor: flavor as ProcFlavor }
                     );
                     break;
                   default:
                     proc = MDUtilsV5.procRemarkFull(
                       {
+                        noteToRender,
+                        noteCacheForRenderDict,
                         dest,
-                        engine,
                         fname,
                         vault,
+                        config,
+                        vaults,
+                        wsRoot,
+                        ...opts.procOpts,
                       },
                       { flavor: flavor as ProcFlavor }
                     );
@@ -252,7 +335,7 @@ export const createProcCompileTests = (opts: {
 export const dupNote = (payload: DVault | string[]) => {
   const out: any = {
     duplicateNoteBehavior: {
-      action: DuplicateNoteActionEnum.useVault,
+      action: "useVault",
     },
   };
   if (_.isArray(payload)) {
@@ -292,25 +375,55 @@ type ProcessTextV2Opts = {
   engine: DEngineClient;
   fname: string;
   vault: DVault;
-  configOverride?: IntermediateDendronConfig;
+  configOverride?: DendronConfig;
+  parsingDependenciesByFname?: string[];
+  parsingDependenciesByNoteProps?: NoteProps[];
 };
 
 export const processTextV2 = async (opts: ProcessTextV2Opts) => {
   const { engine, text, fname, vault, configOverride } = opts;
+  const config = configOverride || DConfig.readConfigSync(engine.wsRoot);
+  const noteToRender = (await engine.findNotes({ fname, vault }))[0];
+  const noteCacheForRenderDict = await getParsingDependencyDicts(
+    noteToRender,
+    engine,
+    config,
+    engine.vaults
+  );
+  if (opts.parsingDependenciesByFname) {
+    await Promise.all(
+      opts.parsingDependenciesByFname.map(async (dep) => {
+        NoteDictsUtils.add(
+          (await engine.getNote(dep)).data!,
+          noteCacheForRenderDict
+        );
+      })
+    );
+  }
+
+  if (opts.parsingDependenciesByNoteProps) {
+    opts.parsingDependenciesByNoteProps.map((dep) => {
+      NoteDictsUtils.add(dep, noteCacheForRenderDict);
+    });
+  }
+
   if (opts.dest !== DendronASTDest.HTML) {
     const proc = MDUtilsV5.procRemarkFull({
-      engine,
-      config: configOverride,
+      noteToRender,
+      noteCacheForRenderDict,
+      config,
       fname,
       dest: opts.dest,
       vault,
+      vaults: engine.vaults,
     });
     const resp = await proc.process(text);
     return { resp };
   } else {
     const proc = MDUtilsV5.procRehypeFull({
-      engine,
-      config: configOverride,
+      noteToRender,
+      noteCacheForRenderDict,
+      config,
       fname,
       vault,
       // Otherwise links generated in tests use randomly generated IDs which is unstable for snaps
@@ -322,6 +435,7 @@ export const processTextV2 = async (opts: ProcessTextV2Opts) => {
           useId: false,
         },
       },
+      vaults: engine.vaults,
     });
     const resp = await proc.process(text);
     return { resp };

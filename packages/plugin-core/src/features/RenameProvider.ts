@@ -1,39 +1,43 @@
 import {
   assertUnreachable,
   DendronError,
+  DNodeUtils,
+  EngagementEvents,
+  extractNoteChangeEntryCounts,
   NoteChangeEntry,
   NoteProps,
-  NoteUtils,
   VaultUtils,
 } from "@dendronhq/common-all";
+import { DLogger, vault2Path } from "@dendronhq/common-server";
+import { Logger } from "../logger";
 import _ from "lodash";
-import { vault2Path } from "@dendronhq/common-server";
 import vscode from "vscode";
 import { RenameNoteV2aCommand } from "../commands/RenameNoteV2a";
+import { ExtensionProvider } from "../ExtensionProvider";
+import { AnalyticsUtils } from "../utils/analytics";
 import {
   getReferenceAtPosition,
   getReferenceAtPositionResp,
 } from "../utils/md";
 import { VSCodeUtils } from "../vsCodeUtils";
-import { getDWorkspace } from "../workspace";
 import { WSUtils } from "../WSUtils";
-import { ExtensionProvider } from "../ExtensionProvider";
 
 export default class RenameProvider implements vscode.RenameProvider {
   private _targetNote: NoteProps | undefined;
   private refAtPos: getReferenceAtPositionResp | undefined;
+  public L: DLogger = Logger;
 
   set targetNote(value: NoteProps) {
     this._targetNote = value;
   }
 
-  private getRangeForReference(opts: {
+  private async getRangeForReference(opts: {
     reference: getReferenceAtPositionResp;
     document: vscode.TextDocument;
   }) {
     const { reference, document } = opts;
-    const { engine } = getDWorkspace();
-    const { notes, vaults, wsRoot } = engine;
+    const engine = ExtensionProvider.getEngine();
+    const { vaults } = engine;
     const { label, vaultName, range, ref, refType, refText } = reference;
     const targetVault = vaultName
       ? VaultUtils.getVaultByName({ vaults, vname: vaultName })
@@ -44,19 +48,16 @@ export default class RenameProvider implements vscode.RenameProvider {
       });
     } else {
       const fname = ref;
-      const targetNote = NoteUtils.getNoteByFnameV5({
-        fname,
-        notes,
-        vault: targetVault,
-        wsRoot,
-      });
+      const targetNote = (
+        await engine.findNotes({ fname, vault: targetVault })
+      )[0];
       if (targetNote === undefined) {
         throw new DendronError({
           message: `Cannot rename note ${ref} that doesn't exist.`,
         });
       }
       this._targetNote = targetNote;
-      const currentNote = WSUtils.getNoteFromDocument(document);
+      const currentNote = await WSUtils.getNoteFromDocument(document);
       if (_.isEqual(currentNote, targetNote)) {
         throw new DendronError({
           message: `Cannot rename symbol that references current note.`,
@@ -115,6 +116,33 @@ export default class RenameProvider implements vscode.RenameProvider {
     return;
   }
 
+  trackProxyMetrics({
+    note,
+    noteChangeEntryCounts,
+  }: {
+    note: NoteProps;
+    noteChangeEntryCounts: {
+      createdCount?: number;
+      deletedCount?: number;
+      updatedCount?: number;
+    };
+  }) {
+    const extension = ExtensionProvider.getExtension();
+    const engine = extension.getEngine();
+    const { vaults } = engine;
+
+    AnalyticsUtils.track(EngagementEvents.RefactoringCommandUsed, {
+      command: "RenameProvider",
+      ...noteChangeEntryCounts,
+      numVaults: vaults.length,
+      traits: note.traits ?? [],
+      numChildren: note.children.length,
+      numLinks: note.links.length,
+      numChars: note.body.length,
+      noteDepth: DNodeUtils.getDepth(note),
+    });
+  }
+
   public async executeRename(opts: { newName: string }): Promise<
     | {
         changed: NoteChangeEntry[];
@@ -123,7 +151,7 @@ export default class RenameProvider implements vscode.RenameProvider {
   > {
     const { newName } = opts;
     if (this._targetNote !== undefined) {
-      const { engine } = getDWorkspace();
+      const engine = ExtensionProvider.getEngine();
       const { wsRoot } = engine;
       const renameCmd = new RenameNoteV2aCommand();
       const targetVault = this._targetNote.vault;
@@ -153,6 +181,16 @@ export default class RenameProvider implements vscode.RenameProvider {
         openNewFile: false,
         noModifyWatcher: true,
       });
+
+      const noteChangeEntryCounts = extractNoteChangeEntryCounts(resp.changed);
+      try {
+        this.trackProxyMetrics({
+          note: this._targetNote,
+          noteChangeEntryCounts,
+        });
+      } catch (error) {
+        this.L.error({ error });
+      }
 
       const changed = resp.changed;
       if (changed.length > 0) {
@@ -194,8 +232,7 @@ export default class RenameProvider implements vscode.RenameProvider {
     });
     if (reference !== null) {
       this.refAtPos = reference;
-      const range = this.getRangeForReference({ reference, document });
-      return range;
+      return this.getRangeForReference({ reference, document });
     } else {
       throw new DendronError({
         message: "Rename is not supported for this symbol",

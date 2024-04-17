@@ -9,9 +9,12 @@ import { GraphConfig, GraphConfigItem, GraphElements } from "../utils/graph";
 import {
   ConfigUtils,
   DMessageSource,
+  GraphThemeEnum,
+  GraphTypeEnum,
   GraphViewMessage,
   GraphViewMessageEnum,
   VaultUtils,
+  assertUnreachable,
 } from "@dendronhq/common-all";
 import useApplyGraphConfig from "../hooks/useApplyGraphConfig";
 import { DendronProps } from "../types";
@@ -19,6 +22,13 @@ import useSyncGraphWithIDE from "../hooks/useSyncGraphWithIDE";
 import { Button, Space, Spin, Typography } from "antd";
 import { useCurrentTheme, useWorkspaceProps } from "../hooks";
 import { postVSCodeMessage } from "../utils/vscode";
+import { getStyles } from "../styles/custom";
+import ClassicTheme from "../styles/theme-classic";
+import BlockTheme from "../styles/theme-block";
+import MonokaiTheme from "../styles/theme-monokai";
+import popper from "cytoscape-popper";
+import tippy from "tippy.js";
+import "tippy.js/dist/tippy.css";
 
 export class GraphUtils {
   static isLocalGraph(config: GraphConfig) {
@@ -29,65 +39,28 @@ export class GraphUtils {
 
 const getCytoscapeStyle = (
   theme: string | undefined,
-  customCSS: string | undefined
+  customCSS: string | undefined,
+  config: GraphConfig,
+  isSidePanel: boolean | undefined
 ) => {
   if (_.isUndefined(theme)) return "";
 
-  // Cytoscape's "diamond" node is smaller than it's "circle" node, so
-  // this modifier adjusts to make parent and child nodes similarly sized.
-  const PARENT_NODE_SIZE_MODIFIER = 1.25;
-
-  return `
-node {
-  width: ${AntThemes[theme].graph.node.size};
-  height: ${AntThemes[theme].graph.node.size};
-  background-color: ${AntThemes[theme].graph.node.color};
-  color: ${AntThemes[theme].graph.node.label.color};
-  label: data(label);
-  font-size: ${AntThemes[theme].graph.node.label.fontSize};
-  min-zoomed-font-size: ${AntThemes[theme].graph.node.label.minZoomedFontSize};
-  font-weight: ${AntThemes[theme].graph.node.label.fontWeight};
-}
-
-node[color] {
-  background-color: data(color);
-}
-
-edge {
-  width: ${AntThemes[theme].graph.edge.width};
-  line-color: ${AntThemes[theme].graph.edge.color};
-  target-arrow-shape: none;
-  curve-style: haystack;
-}
-
-:selected{
-  background-color: ${AntThemes[theme].graph.node._selected.color};
-  color: ${AntThemes[theme].graph.node._selected.color};
-}
-
-.parent {
-  shape: diamond;
-  width: ${AntThemes[theme].graph.node.size * PARENT_NODE_SIZE_MODIFIER};
-  height: ${AntThemes[theme].graph.node.size * PARENT_NODE_SIZE_MODIFIER};
-}
-
-.links {
-  line-style: dashed;
-}
-
-.hidden--labels {
-  label: ;
-}
-
-.hidden--vault,
-.hidden--regex-allowlist,
-.hidden--regex-blocklist,
-.hidden--stub {
-  display: none;
-}
-
-${customCSS || ""}
-`;
+  switch (config.graphTheme.value) {
+    case GraphThemeEnum.Classic: {
+      return getStyles(theme, ClassicTheme, isSidePanel);
+    }
+    case GraphThemeEnum.Monokai: {
+      return getStyles(theme, MonokaiTheme, isSidePanel);
+    }
+    case GraphThemeEnum.Block: {
+      return getStyles(theme, BlockTheme, isSidePanel);
+    }
+    case GraphThemeEnum.Custom: {
+      return getStyles(theme, ClassicTheme, isSidePanel, customCSS);
+    }
+    default:
+      assertUnreachable(config.graphTheme.value);
+  }
 };
 
 export const getEulerConfig = (shouldAnimate: boolean) => ({
@@ -114,6 +87,8 @@ export const getEulerConfig = (shouldAnimate: boolean) => ({
   randomize: false,
 });
 
+cytoscape.use(popper);
+
 export default function Graph({
   elements,
   type,
@@ -122,6 +97,7 @@ export default function Graph({
   setConfig,
   engine,
   ide,
+  isSidePanel,
 }: DendronProps & {
   elements: GraphElements;
   onSelect: EventHandler;
@@ -141,7 +117,10 @@ export default function Graph({
     ide,
     config,
     workspace,
+    isSidePanel,
   });
+  // maps node id with its tooltip
+  const id2tooltip: { [key: string]: any } = {};
 
   // On config update, handle graph changes
   useApplyGraphConfig({
@@ -161,7 +140,16 @@ export default function Graph({
     children: (val: boolean | undefined) => React.ReactNode;
     val: boolean | undefined;
     update: (val: boolean) => void;
-  }) => <Button onClick={() => update(!val)}>{children(val)}</Button>;
+  }) => (
+    <Button
+      onClick={() => {
+        update(!val);
+        toggleGraphView(val);
+      }}
+    >
+      {children(val)}
+    </Button>
+  );
 
   const renderGraph = () => {
     if (graphRef.current && nodes && edges) {
@@ -186,7 +174,9 @@ export default function Graph({
 
       const style = getCytoscapeStyle(
         currentTheme || "light",
-        ide.graphStyles
+        ide.graphStyles,
+        config,
+        isSidePanel
       ) as any;
       const defaultConfig = ConfigUtils.genDefaultConfig();
 
@@ -223,6 +213,18 @@ export default function Graph({
         }, 1000);
       });
 
+      network.nodes().unbind("mouseover");
+      network.nodes().bind("mouseover", (event) => {
+        // make tooltip for node
+        makePopperWithTippy(event.target, id2tooltip);
+        id2tooltip[event.target.id()].show();
+      });
+
+      network.nodes().unbind("mouseout");
+      network.nodes().bind("mouseout", (event) => {
+        id2tooltip[event.target.id()].destroy();
+      });
+
       const shouldAnimate =
         type === "schema" ||
         (!isLargeGraph && !GraphUtils.isLocalGraph(config));
@@ -236,10 +238,10 @@ export default function Graph({
   };
 
   useEffect(() => {
-    logger.log("Requesting graph style...");
+    logger.log("Requesting graph opts");
     // Get graph style
     postVSCodeMessage({
-      type: GraphViewMessageEnum.onRequestGraphStyle,
+      type: GraphViewMessageEnum.onRequestGraphOpts,
       data: {},
       source: DMessageSource.webClient,
     } as GraphViewMessage);
@@ -264,6 +266,12 @@ export default function Graph({
     renderGraph();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphRef, elements, ide.graphStyles]);
+
+  // re-render graph if graph style is changed.
+  useEffect(() => {
+    renderGraph();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.graphTheme.value, ide.showBacklinks, ide.showOutwardLinks]);
 
   useEffect(() => {
     // If initial vault data received
@@ -357,6 +365,7 @@ export default function Graph({
           <NoteGraphMessage
             updateConfigField={updateConfigField}
             setIsReady={setIsReady}
+            isSidePanel={isSidePanel}
           />
         )}
       </div>
@@ -369,12 +378,16 @@ export default function Graph({
           opacity: isReady ? 1 : 0,
         }}
       >
-        <GraphFilterView
-          config={config}
-          isGraphReady={isReady}
-          updateConfigField={updateConfigField}
-        />
-        {type === "note" && (
+        {!isSidePanel && (
+          <GraphFilterView
+            config={config}
+            isGraphReady={isReady}
+            updateConfigField={updateConfigField}
+            customCSS={ide.graphStyles}
+            type={type}
+          />
+        )}
+        {type === "note" && !isSidePanel && (
           <div
             style={{
               position: "fixed",
@@ -403,6 +416,7 @@ export default function Graph({
             width: "100%",
             height: "100%",
             zIndex: 1,
+            display: showNoteGraphMessage ? "none" : "block",
           }}
         />
       </div>
@@ -413,9 +427,11 @@ export default function Graph({
 const NoteGraphMessage = ({
   updateConfigField,
   setIsReady,
+  isSidePanel,
 }: {
   updateConfigField: (key: string, value: string | number | boolean) => void;
   setIsReady: (isReady: boolean) => void;
+  isSidePanel?: boolean;
 }) => (
   <Space
     direction="vertical"
@@ -432,23 +448,64 @@ const NoteGraphMessage = ({
       This is the <b>Local Note Graph.</b> Open a note in the workspace to see
       its connections here.
     </Typography>
-    <Typography>
-      Change to <b>Full Note Graph</b> to see all notes in the workspace.
-    </Typography>
-    <Button
-      onClick={() => {
-        setIsReady(false);
-
-        // Slight timeout to show loading spinner before re-rendering,
-        // as re-rendering is render-blocking
-        setTimeout(() => {
-          updateConfigField("options.show-local-graph", false);
-        }, 50);
-      }}
-      type="primary"
-      size="large"
-    >
-      Show Full Graph
-    </Button>
+    {!isSidePanel && (
+      <>
+        <Typography>
+          Change to <b>Full Note Graph</b> to see all notes in the workspace.
+        </Typography>
+        <Button
+          onClick={() => {
+            setIsReady(false);
+            // Slight timeout to show loading spinner before re-rendering,
+            // as re-rendering is render-blocking
+            setTimeout(() => {
+              updateConfigField("options.show-local-graph", false);
+            }, 50);
+          }}
+          type="primary"
+          size="large"
+        >
+          Show Full Graph
+        </Button>
+      </>
+    )}
   </Space>
 );
+
+const toggleGraphView = (val?: boolean) => {
+  const graphType = val ? GraphTypeEnum.fullGraph : GraphTypeEnum.localGraph;
+  postVSCodeMessage({
+    type: GraphViewMessageEnum.toggleGraphView,
+    data: { graphType },
+    source: DMessageSource.webClient,
+  } as GraphViewMessage);
+};
+
+const makePopperWithTippy = (
+  node: cytoscape.SingularElementReturnValue,
+  id2tooltip: { [key: string]: any }
+) => {
+  const ref = node.popperRef(); // used only for positioning
+
+  //A dummy element must be passed as tippy only accepts dom element(s) as the target
+  const dummyDomEle = document.createElement("div");
+
+  const tooltip = tippy(dummyDomEle, {
+    // tippy props:
+    getReferenceClientRect: ref.getBoundingClientRect,
+    trigger: "manual", // mandatory, we cause the tippy to show programmatically.
+
+    /**
+     * your own custom props
+     * content prop can be used when the target is a single element
+     */
+    content: () => {
+      const content = document.createElement("div");
+      const nodeData = node.data();
+      const fname = nodeData["fname"];
+      content.innerHTML = fname;
+      return content;
+    },
+  });
+  id2tooltip[node.id()] = tooltip;
+};

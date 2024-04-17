@@ -1,7 +1,7 @@
 import {
+  DEngine,
   DNodeUtils,
   NoteProps,
-  NoteUtils,
   VaultUtils,
   WorkspaceOpts,
 } from "@dendronhq/common-all";
@@ -14,7 +14,6 @@ import {
   runJestHarnessV2,
   TestPresetEntryV4,
 } from "@dendronhq/common-test-utils";
-import { DendronEngineV2 } from "@dendronhq/engine-server";
 import {
   ENGINE_HOOKS,
   ENGINE_HOOKS_MULTI,
@@ -33,11 +32,9 @@ import { createEngineFactory, describeMultiWS } from "../testUtilsV3";
 
 const createEngine = createEngineFactory({
   renameNote: (opts: WorkspaceOpts) => {
-    const rename: DendronEngineV2["renameNote"] = async ({
-      oldLoc,
-      newLoc,
-    }) => {
-      const cmd = new MoveNoteCommand();
+    const rename: DEngine["renameNote"] = async ({ oldLoc, newLoc }) => {
+      const extension = ExtensionProvider.getExtension();
+      const cmd = new MoveNoteCommand(extension);
       const vpathOld = vault2Path({
         vault: VaultUtils.getVaultByName({
           vaults: opts.vaults,
@@ -63,11 +60,37 @@ const createEngine = createEngineFactory({
         ],
       });
       return {
-        error: null,
         data: resp?.changed,
       };
     };
     return rename;
+  },
+  findNotes: () => {
+    const findNotes: DEngine["findNotes"] = async ({ fname, vault }) => {
+      return ExtensionProvider.getEngine().findNotes({ fname, vault });
+    };
+    return findNotes;
+  },
+  findNotesMeta: () => {
+    const findNotesMeta: DEngine["findNotesMeta"] = async ({
+      fname,
+      vault,
+    }) => {
+      return ExtensionProvider.getEngine().findNotesMeta({ fname, vault });
+    };
+    return findNotesMeta;
+  },
+  getNote: () => {
+    const getNote: DEngine["getNote"] = async (id) => {
+      return ExtensionProvider.getEngine().getNote(id);
+    };
+    return getNote;
+  },
+  getNoteMeta: () => {
+    const getNoteMeta: DEngine["getNoteMeta"] = async (id) => {
+      return ExtensionProvider.getEngine().getNoteMeta(id);
+    };
+    return getNoteMeta;
   },
 });
 
@@ -77,6 +100,7 @@ suite("MoveNoteCommand", function () {
       "NO_UPDATE",
       "NO_UPDATE_NUMBER_IN_FM",
       "NO_UPDATE_DOUBLE_QUOTE_IN_FM",
+      "RENAME_FOR_CACHE",
     ]),
     (TestCase: TestPresetEntryV4, name) => {
       const { testFunc, preSetupHook } = TestCase;
@@ -137,7 +161,8 @@ suite("MoveNoteCommand", function () {
           });
           await active.document.save();
 
-          const cmd = new MoveNoteCommand();
+          const extension = ExtensionProvider.getExtension();
+          const cmd = new MoveNoteCommand(extension);
           const resp = await cmd.execute({
             moves: [
               {
@@ -152,7 +177,7 @@ suite("MoveNoteCommand", function () {
               },
             ],
           });
-          expect(resp?.changed?.length).toEqual(3);
+          expect(resp?.changed?.length).toEqual(6);
           active = VSCodeUtils.getActiveTextEditor() as vscode.TextEditor;
           expect(DNodeUtils.fname(active.document.uri.fsPath)).toEqual(
             "foobar"
@@ -183,10 +208,10 @@ suite("MoveNoteCommand", function () {
     },
     () => {
       test("THEN update hashtags correctly", async () => {
-        const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        await WSUtils.openNote(tagNote);
-
-        const cmd = new MoveNoteCommand();
+        const { vaults, engine } = ExtensionProvider.getDWorkspace();
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(tagNote);
+        const cmd = new MoveNoteCommand(extension);
         await cmd.execute({
           moves: [
             {
@@ -201,12 +226,9 @@ suite("MoveNoteCommand", function () {
             },
           ],
         });
-        const testNote = NoteUtils.getNoteByFnameV5({
-          fname: "test",
-          notes: engine.notes,
-          wsRoot,
-          vault: vaults[0],
-        })!;
+        const testNote = (
+          await engine.findNotes({ fname: "test", vault: vaults[0] })
+        )[0];
         expect(
           await AssertUtils.assertInString({
             body: testNote?.body,
@@ -236,10 +258,10 @@ suite("MoveNoteCommand", function () {
     },
     () => {
       test("THEN  turns links to hashtags", async () => {
-        const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        await WSUtils.openNote(tagNote);
-
-        const cmd = new MoveNoteCommand();
+        const { vaults, engine } = ExtensionProvider.getDWorkspace();
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(tagNote);
+        const cmd = new MoveNoteCommand(extension);
         await cmd.execute({
           moves: [
             {
@@ -254,12 +276,9 @@ suite("MoveNoteCommand", function () {
             },
           ],
         });
-        const testNote = NoteUtils.getNoteByFnameV5({
-          fname: "test",
-          notes: engine.notes,
-          wsRoot,
-          vault: vaults[0],
-        })!;
+        const testNote = (
+          await engine.findNotes({ fname: "test", vault: vaults[0] })
+        )[0];
         expect(
           await AssertUtils.assertInString({
             body: testNote?.body,
@@ -289,10 +308,10 @@ suite("MoveNoteCommand", function () {
     },
     () => {
       test("THEN turns hashtags into regular links", async () => {
-        const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        await WSUtils.openNote(tagNote);
-
-        const cmd = new MoveNoteCommand();
+        const { vaults, engine } = ExtensionProvider.getDWorkspace();
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(tagNote);
+        const cmd = new MoveNoteCommand(extension);
         await cmd.execute({
           moves: [
             {
@@ -307,12 +326,9 @@ suite("MoveNoteCommand", function () {
             },
           ],
         });
-        const testNote = NoteUtils.getNoteByFnameV5({
-          fname: "test",
-          notes: engine.notes,
-          wsRoot,
-          vault: vaults[0],
-        })!;
+        const testNote = (
+          await engine.findNotes({ fname: "test", vault: vaults[0] })
+        )[0];
         expect(
           await AssertUtils.assertInString({
             body: testNote?.body,
@@ -335,13 +351,12 @@ suite("MoveNoteCommand", function () {
         const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
         const vaultFrom = vaults[0];
         const vaultTo = vaults[0];
-        const fooNote = NoteUtils.getNoteByFnameFromEngine({
-          fname: "foo",
-          vault: vaultFrom,
-          engine,
-        }) as NoteProps;
-        await WSUtils.openNote(fooNote);
-        const cmd = new MoveNoteCommand();
+        const fooNote = (
+          await engine.findNotesMeta({ fname: "foo", vault: vaultFrom })
+        )[0];
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(fooNote);
+        const cmd = new MoveNoteCommand(extension);
         await cmd.execute({
           moves: [
             {
@@ -350,7 +365,7 @@ suite("MoveNoteCommand", function () {
                 vaultName: VaultUtils.getName(vaultFrom),
               },
               newLoc: {
-                fname: "bar",
+                fname: "newFoo",
                 vaultName: VaultUtils.getName(vaultTo),
               },
             },
@@ -358,7 +373,7 @@ suite("MoveNoteCommand", function () {
         });
         expect(
           VSCodeUtils.getActiveTextEditor()?.document.fileName.endsWith(
-            path.join("vault1", "bar.md")
+            path.join("vault1", "newFoo.md")
           )
         ).toBeTruthy();
         // note not in old vault
@@ -366,23 +381,19 @@ suite("MoveNoteCommand", function () {
           await EngineTestUtilsV4.checkVault({
             wsRoot,
             vault: vaultFrom,
-            match: ["bar.md"],
+            match: ["newFoo.md"],
             nomatch: ["foo.md"],
           })
         ).toBeTruthy();
         // note foo is now a stub
-        const fooNoteAfter = _.toArray(engine.notes).find((note) => {
-          return note.fname === "foo";
-        });
+        const fooNoteAfter = (await engine.findNotes({ fname: "foo" }))[0];
         expect(!_.isUndefined(fooNoteAfter) && fooNoteAfter.stub).toBeTruthy();
-        // bar isn't in the first vault
+        // newFoo is in the first vault
         expect(
           _.isUndefined(
-            NoteUtils.getNoteByFnameFromEngine({
-              fname: "bar",
-              vault: vaultFrom,
-              engine,
-            })
+            (
+              await engine.findNotesMeta({ fname: "newFoo", vault: vaultFrom })
+            )[0]
           )
         ).toBeFalsy();
       });
@@ -400,7 +411,6 @@ suite("MoveNoteCommand", function () {
       test("THEN do right thing", async () => {
         const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
         const ext = ExtensionProvider.getExtension();
-        const notes = engine.notes;
         const vault1 = vaults[0];
         const vault2 = vaults[0];
         const fname = "scratch.2020.02.03.0123";
@@ -413,7 +423,7 @@ suite("MoveNoteCommand", function () {
         });
 
         await ext.wsUtils.openNote(scratchNote);
-        const cmd = new MoveNoteCommand();
+        const cmd = new MoveNoteCommand(ext);
         await cmd.execute({
           moves: [
             {
@@ -422,7 +432,7 @@ suite("MoveNoteCommand", function () {
                 vaultName: VaultUtils.getName(vault1),
               },
               newLoc: {
-                fname: "bar",
+                fname: "newScratch",
                 vaultName: VaultUtils.getName(vault2),
               },
             },
@@ -430,15 +440,11 @@ suite("MoveNoteCommand", function () {
         });
         expect(
           VSCodeUtils.getActiveTextEditor()?.document.fileName.endsWith(
-            path.join("vault1", "bar.md")
+            path.join("vault1", "newScratch.md")
           )
         ).toBeTruthy();
-        expect(
-          await AssertUtils.assertInString({
-            body: _.keys(notes).join("\n"),
-            match: [fname],
-          })
-        ).toBeTruthy();
+        const note = await engine.getNote(fname);
+        expect(note.data).toBeTruthy();
       });
     }
   );
@@ -453,17 +459,14 @@ suite("MoveNoteCommand", function () {
     () => {
       test("THEN do right thing", async () => {
         const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        const notes = engine.notes;
         const vault1 = vaults[0];
         const vault2 = vaults[1];
-        const fooNote = NoteUtils.getNoteByFnameV5({
-          fname: "foo",
-          notes,
-          vault: vault1,
-          wsRoot,
-        }) as NoteProps;
-        await WSUtils.openNote(fooNote);
-        const cmd = new MoveNoteCommand();
+        const fooNote = (
+          await engine.findNotes({ fname: "foo", vault: vault1 })
+        )[0];
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(fooNote);
+        const cmd = new MoveNoteCommand(extension);
         await cmd.execute({
           moves: [
             {
@@ -499,9 +502,7 @@ suite("MoveNoteCommand", function () {
             match: ["foo.md"],
           })
         ).toBeTruthy();
-        const fooNotes = _.toArray(engine.notes).filter((note) => {
-          return note.fname === "foo";
-        });
+        const fooNotes = await engine.findNotesMeta({ fname: "foo" });
         const vault1Foo = fooNotes.find(
           (note) => note.vault.fsPath === "vault1"
         );
@@ -512,12 +513,7 @@ suite("MoveNoteCommand", function () {
         expect(!_.isUndefined(vault2Foo)).toBeTruthy();
         expect(
           _.isUndefined(
-            NoteUtils.getNoteByFnameV5({
-              fname: "foo",
-              notes,
-              vault: vault2,
-              wsRoot,
-            })
+            (await engine.findNotes({ fname: "foo", vault: vault2 }))[0]
           )
         ).toBeFalsy();
       });
@@ -534,20 +530,17 @@ suite("MoveNoteCommand", function () {
     () => {
       test("THEN do right thing", async () => {
         const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        const notes = engine.notes;
         const vault1 = vaults[0];
         const vault2 = vaults[1];
         const vault3 = vaults[2];
 
-        const fooNote = NoteUtils.getNoteByFnameV5({
-          fname: "foo",
-          notes,
-          vault: vault1,
-          wsRoot,
-        }) as NoteProps;
+        const fooNote = (
+          await engine.findNotes({ fname: "foo", vault: vault1 })
+        )[0];
 
-        await WSUtils.openNote(fooNote);
-        const cmd = new MoveNoteCommand();
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(fooNote);
+        const cmd = new MoveNoteCommand(extension);
 
         sinon
           .stub(VSCodeUtils, "showQuickPick")
@@ -586,30 +579,22 @@ suite("MoveNoteCommand", function () {
         expect(
           await EngineTestUtilsV4.checkVault({
             wsRoot,
-            vault: vault1,
-            nomatch: ["foo.md"],
-          })
-        ).toBeTruthy();
-        expect(
-          await EngineTestUtilsV4.checkVault({
-            wsRoot,
             vault: vault2,
             nomatch: ["bar.md"],
           })
         ).toBeTruthy();
 
-        const vault1Foo = _.toArray(engine.notes)
-          .filter((note) => note.fname === "foo")
-          .find((note) => note.vault.fsPath === "vault1");
+        const vault1Foo = (
+          await engine.findNotesMeta({
+            fname: "foo",
+            vault: vault1,
+          })
+        )[0];
+
         expect(!_.isUndefined(vault1Foo) && vault1Foo.stub).toBeTruthy();
         expect(
           _.isUndefined(
-            NoteUtils.getNoteByFnameV5({
-              fname: "bar",
-              notes,
-              vault: vault2,
-              wsRoot,
-            })
+            (await engine.findNotes({ fname: "bar", vault: vault2 }))[0]
           )
         ).toBeTruthy();
 
@@ -623,20 +608,10 @@ suite("MoveNoteCommand", function () {
         ).toBeTruthy();
 
         expect(
-          NoteUtils.getNoteByFnameV5({
-            fname: "foo",
-            notes,
-            vault: vault3,
-            wsRoot,
-          })
+          (await engine.findNotes({ fname: "foo", vault: vault3 }))[0]
         ).toBeTruthy();
         expect(
-          NoteUtils.getNoteByFnameV5({
-            fname: "bar",
-            notes,
-            vault: vault3,
-            wsRoot,
-          })
+          (await engine.findNotes({ fname: "bar", vault: vault3 }))[0]
         ).toBeTruthy();
       });
     }
@@ -652,18 +627,15 @@ suite("MoveNoteCommand", function () {
     () => {
       test("THEN do right thing", async () => {
         const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        const notes = engine.notes;
         const vault1 = vaults[0];
         const vault2 = vaults[1];
-        const fooNote = NoteUtils.getNoteByFnameV5({
-          fname: "foo",
-          notes,
-          vault: vault1,
-          wsRoot,
-        }) as NoteProps;
+        const fooNote = (
+          await engine.findNotes({ fname: "foo", vault: vault1 })
+        )[0];
 
-        await WSUtils.openNote(fooNote);
-        const cmd = new MoveNoteCommand();
+        const extension = ExtensionProvider.getExtension();
+        await extension.wsUtils.openNote(fooNote);
+        const cmd = new MoveNoteCommand(extension);
 
         sinon
           .stub(VSCodeUtils, "showQuickPick")
@@ -707,24 +679,15 @@ suite("MoveNoteCommand", function () {
           })
         ).toBeTruthy();
 
+        // Since there are no more children, stubs should not exist
         expect(
           _.isUndefined(
-            NoteUtils.getNoteByFnameV5({
-              fname: "foo",
-              notes,
-              vault: vault1,
-              wsRoot,
-            })
+            (await engine.findNotes({ fname: "foo", vault: vault1 }))[0]
           )
         ).toBeTruthy();
         expect(
           _.isUndefined(
-            NoteUtils.getNoteByFnameV5({
-              fname: "foo.ch1",
-              notes,
-              vault: vault1,
-              wsRoot,
-            })
+            (await engine.findNotes({ fname: "foo.ch1", vault: vault1 }))[0]
           )
         ).toBeTruthy();
 
@@ -737,20 +700,10 @@ suite("MoveNoteCommand", function () {
         ).toBeTruthy();
 
         expect(
-          NoteUtils.getNoteByFnameV5({
-            fname: "foo",
-            notes,
-            vault: vault2,
-            wsRoot,
-          })
+          (await engine.findNotes({ fname: "foo", vault: vault2 }))[0]
         ).toBeTruthy();
         expect(
-          NoteUtils.getNoteByFnameV5({
-            fname: "foo.ch1",
-            notes,
-            vault: vault2,
-            wsRoot,
-          })
+          (await engine.findNotes({ fname: "foo.ch1", vault: vault2 }))[0]
         ).toBeTruthy();
       });
     }
@@ -774,15 +727,11 @@ suite("MoveNoteCommand", function () {
     },
     () => {
       test("THEN do right thing", async () => {
-        const { wsRoot, vaults, engine } = ExtensionProvider.getDWorkspace();
-        const notes = engine.notes;
+        const { vaults, engine } = ExtensionProvider.getDWorkspace();
         const vault1 = vaults[0];
-        const fooNote = NoteUtils.getNoteByFnameV5({
-          fname: "foo",
-          notes,
-          vault: vault1,
-          wsRoot,
-        }) as NoteProps;
+        const fooNote = (
+          await engine.findNotes({ fname: "foo", vault: vault1 })
+        )[0];
 
         await WSUtils.openNote(fooNote);
         const lc =

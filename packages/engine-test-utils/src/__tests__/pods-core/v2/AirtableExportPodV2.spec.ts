@@ -145,7 +145,12 @@ const setupTestFactoryForNote = (opts: {
   return _setupTestFactoryCommon({
     ...opts,
     cb: async ({ engine, pod }) => {
-      const note = TestEngineUtils.getNoteByFname(engine, opts.fname);
+      const note = (
+        await engine.findNotes({
+          fname: opts.fname,
+          vault: engine.vaults[0],
+        })
+      )[0];
       return pod.exportNotes([note!]);
     },
   });
@@ -158,9 +163,10 @@ const setupTestFactoryForNotes = (opts: {
   return _setupTestFactoryCommon({
     ...opts,
     cb: async ({ engine, pod }) => {
-      const notes = _.values(engine.notes).filter(
-        (ent) => !DNodeUtils.isRoot(ent)
-      );
+      const engineNotes = await engine.findNotes({
+        excludeStub: false,
+      });
+      const notes = engineNotes.filter((ent) => !DNodeUtils.isRoot(ent));
       return pod.exportNotes(notes);
     },
   });

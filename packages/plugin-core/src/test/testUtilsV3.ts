@@ -1,11 +1,12 @@
 import {
   ConfigUtils,
   DENDRON_VSCODE_CONFIG_KEYS,
+  DEngine,
   DEngineClient,
   Disposable,
   DVault,
   InstallStatus,
-  IntermediateDendronConfig,
+  DendronConfig,
   isNotUndefined,
   NoteChangeEntry,
   NoteUtils,
@@ -18,6 +19,7 @@ import {
 } from "@dendronhq/common-all";
 import {
   assignJSONWithComment,
+  DConfig,
   note2File,
   readYAML,
   schemaModuleOpts2File,
@@ -32,9 +34,7 @@ import {
   PreSetupHookFunction,
 } from "@dendronhq/common-test-utils";
 import {
-  DConfig,
   DendronEngineClient,
-  DendronEngineV2,
   Git,
   HistoryService,
   WorkspaceUtils,
@@ -48,6 +48,7 @@ import fs from "fs-extra";
 import _ from "lodash";
 import { after, afterEach, before, beforeEach, describe } from "mocha";
 import os from "os";
+import { performance } from "perf_hooks";
 import sinon from "sinon";
 import {
   CancellationToken,
@@ -60,15 +61,15 @@ import {
   SetupWorkspaceOpts,
 } from "../commands/SetupWorkspace";
 import { VaultAddCommand } from "../commands/VaultAddCommand";
+import { ExtensionProvider } from "../ExtensionProvider";
 import { Logger } from "../logger";
 import { StateService } from "../services/stateService";
 import { WorkspaceConfig } from "../settings";
 import { VSCodeUtils } from "../vsCodeUtils";
-import { DendronExtension, getDWorkspace } from "../workspace";
+import { DendronExtension } from "../workspace";
 import { BlankInitializer } from "../workspace/blankInitializer";
 import { WorkspaceInitFactory } from "../workspace/WorkspaceInitFactory";
 import { _activate } from "../_extension";
-import { ExtensionProvider } from "../ExtensionProvider";
 import {
   cleanupVSCodeContextSubscriptions,
   setupCodeConfiguration,
@@ -145,12 +146,12 @@ export class EditorUtils {
 
 export const getConfig = (opts: { wsRoot: string }) => {
   const configPath = DConfig.configPath(opts.wsRoot);
-  const config = readYAML(configPath) as IntermediateDendronConfig;
+  const config = readYAML(configPath) as DendronConfig;
   return config;
 };
 
 export const withConfig = (
-  func: (config: IntermediateDendronConfig) => IntermediateDendronConfig,
+  func: (config: DendronConfig) => DendronConfig,
   opts: { wsRoot: string }
 ) => {
   const config = getConfig(opts);
@@ -161,7 +162,7 @@ export const withConfig = (
 };
 
 export const writeConfig = (opts: {
-  config: IntermediateDendronConfig;
+  config: DendronConfig;
   wsRoot: string;
 }) => {
   const configPath = DConfig.configPath(opts.wsRoot);
@@ -181,7 +182,7 @@ export async function setupLegacyWorkspace(
     workspaceType: WorkspaceType.CODE,
     preSetupHook: async () => {},
     postSetupHook: async () => {},
-    selfContained: false,
+    selfContained: true,
   });
   const wsRoot = tmpDir().name;
   if (opts.selfContained) {
@@ -200,14 +201,18 @@ export async function setupLegacyWorkspace(
     wsRoot,
   });
 
-  const vaults = await new SetupWorkspaceCommand().execute({
-    rootDirRaw: wsRoot,
-    skipOpenWs: true,
-    ...copts.setupWsOverride,
-    workspaceInitializer: new BlankInitializer(),
-    workspaceType: copts.workspaceType,
-    selfContained: copts.selfContained,
-  });
+  const { wsVault, additionalVaults } =
+    await new SetupWorkspaceCommand().execute({
+      rootDirRaw: wsRoot,
+      skipOpenWs: true,
+      ...copts.setupWsOverride,
+      workspaceInitializer: new BlankInitializer(),
+      workspaceType: copts.workspaceType,
+      selfContained: copts.selfContained,
+    });
+  const vaults = [wsVault, ...(additionalVaults || [])].filter(
+    (v) => !_.isUndefined(v)
+  ) as DVault[];
   stubWorkspaceFolders(wsRoot, vaults);
 
   // update config
@@ -307,8 +312,13 @@ export async function runLegacySingleWorkspaceTest(
   opts: SetupLegacyWorkspaceOpts & { onInit: OnInitHook }
 ) {
   const { wsRoot, vaults } = await setupLegacyWorkspace(opts);
-  await _activate(opts.ctx!);
-  const engine = getDWorkspace().engine;
+  await _activate(opts.ctx!, {
+    skipLanguageFeatures: true,
+    skipInteractiveElements: true,
+    skipMigrations: true,
+    skipTreeView: true,
+  });
+  const engine = ExtensionProvider.getEngine();
   await opts.onInit({ wsRoot, vaults, engine });
 
   cleanupVSCodeContextSubscriptions(opts.ctx!);
@@ -318,11 +328,21 @@ export async function runLegacySingleWorkspaceTest(
  * @deprecated please use {@link describeMultiWS} instead
  */
 export async function runLegacyMultiWorkspaceTest(
-  opts: SetupLegacyWorkspaceMultiOpts & { onInit: OnInitHook }
+  opts: SetupLegacyWorkspaceMultiOpts & {
+    onInit: OnInitHook;
+    skipMigrations?: boolean;
+  }
 ) {
   const { wsRoot, vaults } = await setupLegacyWorkspaceMulti(opts);
-  await _activate(opts.ctx!);
-  const engine = getDWorkspace().engine;
+  await _activate(opts.ctx!, {
+    skipLanguageFeatures: true,
+    skipInteractiveElements: true,
+    skipMigrations: _.isBoolean(opts.skipMigrations)
+      ? opts.skipMigrations
+      : true,
+    skipTreeView: true,
+  });
+  const engine = ExtensionProvider.getEngine();
   await opts.onInit({ wsRoot, vaults, engine });
 
   cleanupVSCodeContextSubscriptions(opts.ctx!);
@@ -406,17 +426,10 @@ export function stubSetupWorkspace({ wsRoot }: { wsRoot: string }) {
   };
 }
 
-class FakeEngine {
-  get notes() {
-    return getDWorkspace().engine.notes;
-  }
-  get schemas() {
-    return getDWorkspace().engine.schemas;
-  }
-}
+class FakeEngine {}
 
 type EngineOverride = {
-  [P in keyof DendronEngineV2]: (opts: WorkspaceOpts) => DendronEngineV2[P];
+  [P in keyof DEngine]: (opts: WorkspaceOpts) => DEngine[P];
 };
 
 export const createEngineFactory = (
@@ -426,7 +439,7 @@ export const createEngineFactory = (
     opts: WorkspaceOpts
   ): DEngineClient => {
     const engine = new FakeEngine() as DEngineClient;
-    _.map(overrides || {}, (method, key: keyof DendronEngineV2) => {
+    _.map(overrides || {}, (method, key: keyof DEngine) => {
       // @ts-ignore
       engine[key] = method(opts);
     });
@@ -493,7 +506,7 @@ export function runSuiteButSkipForWindows() {
  *   () => {
  *     test("THEN initializes correctly", (done) => {
  *       const { engine, _wsRoot, _vaults } = getDWorkspace();
- *       const testNote = engine.notes["foo"];
+ *       const testNote = await engine.getNote("foo").data!;
  *       expect(testNote).toBeTruthy();
  *       done();
  *     });
@@ -533,6 +546,7 @@ export function describeMultiWS(
      */
     timeout?: number;
     noSetInstallStatus?: boolean;
+    skipMigrations?: boolean;
   },
   fn: (ctx: ExtensionContext) => void
 ) {
@@ -553,7 +567,14 @@ export function describeMultiWS(
       if (opts.preActivateHook) {
         await opts.preActivateHook({ ctx, ...out });
       }
-      await _activate(ctx);
+      await _activate(ctx, {
+        skipLanguageFeatures: true,
+        skipInteractiveElements: true,
+        skipMigrations: _.isBoolean(opts.skipMigrations)
+          ? opts.skipMigrations
+          : true,
+        skipTreeView: true,
+      });
     });
 
     const result = fn(ctx);
@@ -568,6 +589,20 @@ export function describeMultiWS(
     });
   });
 }
+describeMultiWS.only = function (
+  ...params: Parameters<typeof describeMultiWS>
+) {
+  describe.only("", () => {
+    describeMultiWS(...params);
+  });
+};
+describeMultiWS.skip = function (
+  ...params: Parameters<typeof describeMultiWS>
+) {
+  describe.skip("", () => {
+    describeMultiWS(...params);
+  });
+};
 
 /**
  * Use to run tests with a single-vault workspace. Used in the same way as
@@ -588,6 +623,8 @@ export function describeSingleWS(
      * See [[Breakpoints|dendron://dendron.docs/pkg.plugin-core.qa.debug#breakpoints]] for more details
      */
     timeout?: number;
+    // added to calculate activation time for performance testing
+    perflogs?: { [key: string]: number };
   },
   fn: (ctx: ExtensionContext) => void
 ) {
@@ -599,7 +636,15 @@ export function describeSingleWS(
     before(async () => {
       setupWorkspaceStubs({ ...opts, ctx });
       await setupLegacyWorkspace(opts);
-      await _activate(ctx);
+      const start = performance.now();
+      await _activate(ctx, {
+        skipLanguageFeatures: true,
+        skipInteractiveElements: true,
+        skipMigrations: true,
+        skipTreeView: true,
+      });
+      const end = performance.now();
+      if (opts.perflogs) opts.perflogs.activationTime = end - start;
     });
 
     const result = fn(ctx);
@@ -611,6 +656,20 @@ export function describeSingleWS(
     });
   });
 }
+describeSingleWS.only = function (
+  ...params: Parameters<typeof describeSingleWS>
+) {
+  describe.only("", () => {
+    describeSingleWS(...params);
+  });
+};
+describeSingleWS.skip = function (
+  ...params: Parameters<typeof describeSingleWS>
+) {
+  describe.skip("", () => {
+    describeSingleWS(...params);
+  });
+};
 
 /**
  * Helper function for Describe*WS to do a run-time check to make sure an async
@@ -658,6 +717,8 @@ export function setupWorkspaceStubs(opts: {
 export function cleanupWorkspaceStubs(ctx: ExtensionContext): void {
   HistoryService.instance().clearSubscriptions();
   cleanupVSCodeContextSubscriptions(ctx);
+  const ext = ExtensionProvider.getExtension();
+  ext.deactivate();
   sinon.restore();
 }
 

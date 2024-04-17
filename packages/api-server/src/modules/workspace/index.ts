@@ -1,17 +1,15 @@
 import {
+  DEngineInitResp,
   error2PlainObject,
   ERROR_SEVERITY,
-  NotePropsDict,
-  SchemaModuleDict,
-  InitializePayload,
+  NoteDictsUtils,
   WorkspaceInitRequest,
-  WorkspaceSyncPayload,
   WorkspaceSyncRequest,
 } from "@dendronhq/common-all";
-import { DendronEngineV2 } from "@dendronhq/engine-server";
+import { DendronEngineV2, DendronEngineV3 } from "@dendronhq/engine-server";
 import { getLogger } from "../../core";
 import { getWSEngine, putWS } from "../../utils";
-import { getDurationMilliseconds } from "@dendronhq/common-server";
+import { DConfig, getDurationMilliseconds } from "@dendronhq/common-server";
 
 export class WorkspaceController {
   static singleton?: WorkspaceController;
@@ -22,53 +20,51 @@ export class WorkspaceController {
     return WorkspaceController.singleton;
   }
 
-  async init({ uri }: WorkspaceInitRequest): Promise<InitializePayload> {
+  async init({ uri }: WorkspaceInitRequest): Promise<DEngineInitResp> {
     const start = process.hrtime();
 
-    let notes: NotePropsDict;
-    let schemas: SchemaModuleDict;
     const ctx = "WorkspaceController:init";
     const logger = getLogger();
     logger.info({ ctx, msg: "enter", uri });
-    const engine = DendronEngineV2.create({
-      wsRoot: uri,
-      logger,
-    });
-    let { error } = await engine.init();
+    const config = DConfig.readConfigSync(uri);
+    let engine;
+    if (config.dev?.enableEngineV3) {
+      engine = DendronEngineV3.create({
+        wsRoot: uri,
+        logger,
+      });
+    } else {
+      engine = DendronEngineV2.create({
+        wsRoot: uri,
+        logger,
+      });
+    }
+    const { data, error } = await engine.init();
     if (error && error.severity === ERROR_SEVERITY.FATAL) {
       logger.error({ ctx, msg: "fatal error initializing notes", error });
-      return { error };
+      return { data, error };
     }
-    notes = engine.notes;
-    schemas = engine.schemas;
     await putWS({ ws: uri, engine });
     const duration = getDurationMilliseconds(start);
     logger.info({ ctx, msg: "finish init", duration, uri, error });
+    let error2;
     if (error) {
-      error = error2PlainObject(error);
+      error2 = error2PlainObject(error);
     }
-    const payload: InitializePayload = {
-      error,
-      data: {
-        notes,
-        schemas,
-        config: engine.config,
-        vaults: engine.vaults,
-        wsRoot: engine.wsRoot,
-      },
+    const payload = {
+      error: error2,
+      data,
     };
     return payload;
   }
 
-  async sync({ ws }: WorkspaceSyncRequest): Promise<WorkspaceSyncPayload> {
+  async sync({ ws }: WorkspaceSyncRequest): Promise<DEngineInitResp> {
     const engine = await getWSEngine({ ws });
-    const { notes, schemas } = engine;
+    const notes = await engine.findNotes({ excludeStub: false });
     return {
-      error: null,
       data: {
-        notes,
-        schemas,
-        config: engine.config,
+        notes: NoteDictsUtils.createNotePropsByIdDict(notes),
+        config: DConfig.readConfigSync(engine.wsRoot),
         vaults: engine.vaults,
         wsRoot: engine.wsRoot,
       },

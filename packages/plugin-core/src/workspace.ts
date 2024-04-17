@@ -7,9 +7,11 @@ import {
   DWorkspaceV2,
   ERROR_STATUS,
   getStage,
-  ResponseUtil,
+  VSCodeEvents,
   WorkspaceSettings,
   WorkspaceType,
+  BacklinkPanelSortOrder,
+  DefaultMap,
 } from "@dendronhq/common-all";
 import { resolvePath } from "@dendronhq/common-server";
 import {
@@ -24,8 +26,6 @@ import _ from "lodash";
 import path from "path";
 import * as vscode from "vscode";
 import { Uri } from "vscode";
-import { CommandFactory } from "./commandFactory";
-import { ICommandFactory } from "./commandFactoryInterface";
 import { LookupControllerV3Factory } from "./components/lookup/LookupControllerV3Factory";
 import { ILookupControllerV3Factory } from "./components/lookup/LookupControllerV3Interface";
 import {
@@ -37,31 +37,30 @@ import {
   ISchemaLookupProviderFactory,
 } from "./components/lookup/LookupProviderV3Interface";
 import { PreviewPanelFactory } from "./components/views/PreviewViewFactory";
-import { DendronContext, DENDRON_COMMANDS, GLOBAL_STATE } from "./constants";
+import { DENDRON_COMMANDS, GLOBAL_STATE } from "./constants";
 import {
   DendronWorkspaceSettings,
   IDendronExtension,
 } from "./dendronExtensionInterface";
 import { ExtensionProvider } from "./ExtensionProvider";
-import BacklinksTreeDataProvider from "./features/BacklinksTreeDataProvider";
 import { Backlink } from "./features/Backlink";
+import BacklinksTreeDataProvider from "./features/BacklinksTreeDataProvider";
+import TipOfTheDayWebview from "./features/TipOfTheDayWebview";
 import { FileWatcher } from "./fileWatcher";
 import { Logger } from "./logger";
 import { CommandRegistrar } from "./services/CommandRegistrar";
 import { EngineAPIService } from "./services/EngineAPIService";
-import {
-  NoteTraitManager,
-  NoteTraitService,
-} from "./services/NoteTraitService";
+import { NoteTraitManager } from "./services/NoteTraitManager";
+import { NoteTraitService } from "./services/NoteTraitService";
 import { SchemaSyncService } from "./services/SchemaSyncService";
 import { ISchemaSyncService } from "./services/SchemaSyncServiceInterface";
-import { UserDefinedTraitV1 } from "./traits/UserDefinedTraitV1";
-import { BacklinkSortOrder } from "./types";
+import { ALL_FEATURE_SHOWCASES } from "./showcase/AllFeatureShowcases";
+import { DisplayLocation } from "./showcase/IFeatureShowcaseMessage";
 import { DisposableStore } from "./utils";
-import { sentryReportingCallback } from "./utils/analytics";
+import { AnalyticsUtils, sentryReportingCallback } from "./utils/analytics";
 import { VersionProvider } from "./versionProvider";
 import { CalendarView } from "./views/CalendarView";
-import { DendronTreeViewV2 } from "./views/DendronTreeViewV2";
+import { GraphPanel } from "./views/GraphPanel";
 import { SampleView } from "./views/SampleView";
 import { VSCodeUtils } from "./vsCodeUtils";
 import { WindowWatcher } from "./windowWatcher";
@@ -113,7 +112,8 @@ export function getEngine() {
 }
 
 export function resolveRelToWSRoot(fpath: string): string {
-  return resolvePath(fpath, getDWorkspace().wsRoot as string);
+  const { wsRoot } = ExtensionProvider.getDWorkspace();
+  return resolvePath(fpath, wsRoot);
 }
 
 /** Given file uri that is within a vault within the current workspace returns the vault. */
@@ -130,9 +130,8 @@ export class DendronExtension implements IDendronExtension {
 
   private _engine?: EngineAPIService;
   private _disposableStore: DisposableStore;
-  private _traitRegistrar: NoteTraitService;
+  private _traitRegistrar: NoteTraitService | undefined;
   private L: typeof Logger;
-  private treeViews: { [key: string]: vscode.WebviewViewProvider };
 
   public backlinksDataProvider: BacklinksTreeDataProvider | undefined;
   public fileWatcher?: FileWatcher;
@@ -149,7 +148,11 @@ export class DendronExtension implements IDendronExtension {
   public type: WorkspaceType;
   public workspaceImpl?: DWorkspaceV2;
   public wsUtils: IWSUtilsV2;
-  public commandFactory: ICommandFactory;
+  public noteRefCommentController: vscode.CommentController;
+  private _inlineNoteRefs: DefaultMap<
+    string,
+    Map<string, vscode.CommentThread>
+  > = new DefaultMap(() => new Map());
 
   static context(): vscode.ExtensionContext {
     return getExtension().context;
@@ -183,6 +186,18 @@ export class DendronExtension implements IDendronExtension {
   }
 
   get traitRegistrar(): NoteTraitService {
+    // Lazy initialize the traits service - only set up note traits after
+    // workspaceImpl has been set, so that the wsRoot path is known for locating
+    // the note trait definition location.
+    if (!this._traitRegistrar) {
+      const { wsRoot } = this.getDWorkspace();
+      this._traitRegistrar = new NoteTraitManager(
+        wsRoot,
+        new CommandRegistrar(this)
+      );
+      this.context.subscriptions.push(this._traitRegistrar);
+    }
+
     return this._traitRegistrar;
   }
 
@@ -220,12 +235,21 @@ export class DendronExtension implements IDendronExtension {
   }
 
   /**
-   * Workspace settings file
+   * Workspace settings file. Warning, this doesn't exist in all workspaces!
+   *
+   * Warning! This function will throw when used in a Native Workspace. Make
+   * sure to use it in a try...catch block unless you're sure you are running in
+   * a Code Workspace.
    */
   static workspaceFile(): vscode.Uri {
     if (!vscode.workspace.workspaceFile) {
       throw Error("no workspace file");
     }
+    return vscode.workspace.workspaceFile;
+  }
+
+  /** Get the workspace settings file, unless it's a native workspace where we may not have one. */
+  static tryWorkspaceFile(): vscode.Uri | undefined {
     return vscode.workspace.workspaceFile;
   }
 
@@ -355,15 +379,17 @@ export class DendronExtension implements IDendronExtension {
     _DendronWorkspace = this;
     this.L = Logger;
     this._disposableStore = new DisposableStore();
-    this.treeViews = {};
     this.setupViews(context);
-    this._traitRegistrar = new NoteTraitManager(new CommandRegistrar(this));
+
     this.wsUtils = new WSUtilsV2(this);
-    this.commandFactory = new CommandFactory(this);
     this.schemaSyncService = new SchemaSyncService(this);
     this.lookupControllerFactory = new LookupControllerV3Factory(this);
     this.noteLookupProviderFactory = new NoteLookupProviderFactory(this);
     this.schemaLookupProviderFactory = new SchemaLookupProviderFactory(this);
+    this.noteRefCommentController = vscode.comments.createCommentController(
+      "noteRefs",
+      "Show note refs"
+    );
 
     const ctx = "DendronExtension";
     this.L.info({ ctx, msg: "initialized" });
@@ -383,6 +409,12 @@ export class DendronExtension implements IDendronExtension {
     return this.workspaceImpl;
   }
 
+  getCommentThreadsState() {
+    return {
+      inlineNoteRefs: this._inlineNoteRefs,
+    };
+  }
+
   /**
    * @deprecated Use {@link VSCodeUtils.getWorkspaceConfig} instead.
    */
@@ -398,11 +430,14 @@ export class DendronExtension implements IDendronExtension {
 
   /** For Native workspaces (without .code-workspace file) this will return undefined. */
   async getWorkspaceSettings(): Promise<WorkspaceSettings | undefined> {
-    const workspaceFile = DendronExtension.workspaceFile();
+    const ctx = "DendronExtension.getWorkspaceSettings";
+    const workspaceFile = DendronExtension.tryWorkspaceFile();
+    if (!workspaceFile) return undefined;
     const resp = await WorkspaceUtils.getCodeWorkspaceSettings(
       path.dirname(workspaceFile.fsPath)
     );
     if (resp.error) {
+      Logger.warn({ ctx, err: resp.error });
       return undefined;
     } else {
       return resp.data;
@@ -410,11 +445,14 @@ export class DendronExtension implements IDendronExtension {
   }
 
   getWorkspaceSettingsSync(): WorkspaceSettings | undefined {
-    const workspaceFile = DendronExtension.workspaceFile();
+    const ctx = "DendronExtension.getWorkspaceSettingsSync";
+    const workspaceFile = DendronExtension.tryWorkspaceFile();
+    if (!workspaceFile) return undefined;
     const resp = WorkspaceUtils.getCodeWorkspaceSettingsSync(
       path.dirname(workspaceFile.fsPath)
     );
     if (resp.error) {
+      Logger.warn({ ctx, err: resp.error });
       return undefined;
     } else {
       return resp.data;
@@ -486,19 +524,12 @@ export class DendronExtension implements IDendronExtension {
     this.getWorkspaceImplOrThrow().engine = engine;
   }
 
-  getTreeView(key: DendronTreeViewKey) {
-    return this.treeViews[key];
-  }
-
   async setupViews(context: vscode.ExtensionContext) {
     const ctx = "setupViews";
     HistoryService.instance().subscribe("extension", async (event) => {
       if (event.action === "initialized") {
         Logger.info({ ctx, msg: "init:treeViewV2" });
-        const dendronTreeView = new DendronTreeViewV2(this, this.getEngine());
         const sampleView = new SampleView();
-
-        this.treeViews[DendronTreeViewKey.SAMPLE_VIEW] = sampleView;
 
         context.subscriptions.push(
           vscode.window.registerWebviewViewProvider(
@@ -515,72 +546,43 @@ export class DendronExtension implements IDendronExtension {
           )
         );
 
-        if (getDWorkspace().config.dev?.enableWebUI) {
-          Logger.info({ ctx, msg: "initWebUI" });
-          context.subscriptions.push(
-            vscode.window.registerWebviewViewProvider(
-              DendronTreeViewV2.viewType,
-              dendronTreeView,
-              {
-                webviewOptions: {
-                  retainContextWhenHidden: true,
-                },
-              }
-            )
-          );
-          VSCodeUtils.setContext(DendronContext.WEB_UI_ENABLED, true);
-        }
-
         // backlinks
         const backlinkTreeView = this.setupBacklinkTreeView();
 
-        // This persists even if getChildren populates the view.
-        // Removing it for now.
-        // backlinkTreeView.message = "There are no links to this note."
+        // Tip of the Day
+        const tipOfDayView = this.setupTipOfTheDayView();
+
+        // Graph panel (side)
+        const graphPanel = this.setupGraphPanel();
+
         context.subscriptions.push(backlinkTreeView);
-        context.subscriptions.push(dendronTreeView);
+        context.subscriptions.push(tipOfDayView);
+        context.subscriptions.push(graphPanel);
       }
     });
   }
 
-  // ^6fjseznl6au4
-  async setupTraits() {
-    // Register any User Defined Note Traits
-    const userTraitsPath = getDWorkspace().wsRoot
-      ? path.join(
-          getDWorkspace().wsRoot,
-          CONSTANTS.DENDRON_USER_NOTE_TRAITS_BASE
-        )
-      : undefined;
+  private setupTipOfTheDayView() {
+    const featureShowcaseWebview = new TipOfTheDayWebview(
+      _.filter(ALL_FEATURE_SHOWCASES, (message) =>
+        message.shouldShow(DisplayLocation.TipOfTheDayView)
+      )
+    );
 
-    if (userTraitsPath && fs.pathExistsSync(userTraitsPath)) {
-      const files = fs.readdirSync(userTraitsPath);
-      files.forEach((file) => {
-        if (file.endsWith(".js")) {
-          const traitId = path.basename(file, ".js");
-          this.L.info("Registering User Defined Note Trait with ID " + traitId);
-          const newNoteTrait = new UserDefinedTraitV1(
-            traitId,
-            path.join(userTraitsPath, file)
-          );
-          const resp = this._traitRegistrar.registerTrait(newNoteTrait);
-          if (ResponseUtil.hasError(resp)) {
-            this.L.error({
-              msg: `Error registering trait for trait definition at ${file}`,
-            });
-          }
-        }
-      });
-    }
+    return vscode.window.registerWebviewViewProvider(
+      DendronTreeViewKey.TIP_OF_THE_DAY,
+      featureShowcaseWebview
+    );
   }
 
   private setupBacklinkTreeView() {
     const ctx = "setupBacklinkTreeView";
     Logger.info({ ctx, msg: "init:backlinks" });
+    const config = this.getDWorkspace().config;
 
     const backlinksTreeDataProvider = new BacklinksTreeDataProvider(
       this.getEngine(),
-      this.getDWorkspace().config.dev?.enableLinkCandidates
+      config,
     );
 
     const backlinkTreeView = vscode.window.createTreeView(
@@ -590,22 +592,70 @@ export class DendronExtension implements IDendronExtension {
         showCollapseAll: true,
       }
     );
+
+    backlinkTreeView.onDidExpandElement(() => {
+      AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+        type: "ExpandElement",
+      });
+    });
+
+    backlinkTreeView.onDidChangeVisibility((e) => {
+      AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+        type: "VisibilityChanged",
+        state: e.visible ? "Visible" : "Collapsed",
+      });
+    });
+
     this.backlinksDataProvider = backlinksTreeDataProvider;
     this.context.subscriptions.push(backlinksTreeDataProvider);
 
     vscode.commands.registerCommand(
       DENDRON_COMMANDS.BACKLINK_SORT_BY_LAST_UPDATED.key,
       sentryReportingCallback(() => {
-        backlinksTreeDataProvider.updateSortOrder(
-          BacklinkSortOrder.LastUpdated
-        );
+        AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+          type: "SortOrderChanged",
+          state: "SortByLastUpdated",
+        });
+
+        backlinksTreeDataProvider.sortOrder =
+          BacklinkPanelSortOrder.LastUpdated;
       })
     );
 
     vscode.commands.registerCommand(
       DENDRON_COMMANDS.BACKLINK_SORT_BY_PATH_NAMES.key,
       sentryReportingCallback(() => {
-        backlinksTreeDataProvider.updateSortOrder(BacklinkSortOrder.PathNames);
+        AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+          type: "SortOrderChanged",
+          state: "SortByPathName",
+        });
+
+        backlinksTreeDataProvider.sortOrder = BacklinkPanelSortOrder.PathNames;
+      })
+    );
+
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.BACKLINK_SORT_BY_LAST_UPDATED_CHECKED.key,
+      sentryReportingCallback(() => {
+        AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+          type: "SortOrderChanged",
+          state: "SortByLastUpdated",
+        });
+
+        backlinksTreeDataProvider.sortOrder =
+          BacklinkPanelSortOrder.LastUpdated;
+      })
+    );
+
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.BACKLINK_SORT_BY_PATH_NAMES_CHECKED.key,
+      sentryReportingCallback(() => {
+        AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+          type: "SortOrderChanged",
+          state: "SortByPathName",
+        });
+
+        backlinksTreeDataProvider.sortOrder = BacklinkPanelSortOrder.PathNames;
       })
     );
 
@@ -623,24 +673,80 @@ export class DendronExtension implements IDendronExtension {
         const children = await backlinksTreeDataProvider.getChildren();
         children?.forEach((backlink) => {
           expand(backlink);
-
-          if (backlink.refs) {
-            const childBacklinks =
-              backlinksTreeDataProvider.getSecondLevelRefsToBacklinks(
-                backlink.refs
-              );
-
-            if (childBacklinks) {
-              childBacklinks.forEach((b) => {
-                expand(b);
-              });
-            }
-          }
         });
       })
     );
 
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GOTO_BACKLINK.key,
+      (uri, options, isCandidate) => {
+        AnalyticsUtils.track(VSCodeEvents.BacklinksPanelUsed, {
+          type: "BacklinkClicked",
+          state: isCandidate === true ? "Candidate" : "Link",
+        });
+
+        vscode.commands.executeCommand("vscode.open", uri, options);
+      }
+    );
+
     return backlinkTreeView;
+  }
+
+  private setupGraphPanel() {
+    const graphPanel = new GraphPanel(this);
+
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_INCREASE_DEPTH.key,
+      sentryReportingCallback(() => {
+        graphPanel.increaseGraphDepth();
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_DECREASE_DEPTH.key,
+      sentryReportingCallback(() => {
+        graphPanel.decreaseGraphDepth();
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_BACKLINKS_CHECKED.key,
+      sentryReportingCallback(() => {
+        graphPanel.showBacklinks = false;
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_BACKLINKS.key,
+      sentryReportingCallback(() => {
+        graphPanel.showBacklinks = true;
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_OUTWARD_LINKS_CHECKED.key,
+      sentryReportingCallback(() => {
+        graphPanel.showOutwardLinks = false;
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_OUTWARD_LINKS.key,
+      sentryReportingCallback(() => {
+        graphPanel.showOutwardLinks = true;
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_HIERARCHY_CHECKED.key,
+      sentryReportingCallback(() => {
+        graphPanel.showHierarchy = false;
+      })
+    );
+    vscode.commands.registerCommand(
+      DENDRON_COMMANDS.GRAPH_PANEL_SHOW_HIERARCHY.key,
+      sentryReportingCallback(() => {
+        graphPanel.showHierarchy = true;
+      })
+    );
+    return vscode.window.registerWebviewViewProvider(
+      GraphPanel.viewType,
+      graphPanel
+    );
   }
 
   addDisposable(disposable: vscode.Disposable) {
@@ -657,7 +763,7 @@ export class DendronExtension implements IDendronExtension {
     const ctx = "activateWorkspace";
     const stage = getStage();
     this.L.info({ ctx, stage, msg: "enter" });
-    const { wsRoot } = getDWorkspace();
+    const { wsRoot, vaults } = ExtensionProvider.getDWorkspace();
     if (!wsRoot) {
       throw new Error(`rootDir not set when activating Watcher`);
     }
@@ -681,21 +787,19 @@ export class DendronExtension implements IDendronExtension {
 
     const wsFolders = DendronExtension.workspaceFolders();
     if (_.isUndefined(wsFolders) || _.isEmpty(wsFolders)) {
-      this.L.error({
+      this.L.info({
         ctx,
         msg: "no folders set for workspace",
       });
-      throw Error("no folders set for workspace");
     }
-    const realVaults = getDWorkspace().vaults;
     const fileWatcher = new FileWatcher({
       workspaceOpts: {
         wsRoot,
-        vaults: realVaults,
+        vaults,
       },
     });
 
-    fileWatcher.activate(getExtension().context);
+    fileWatcher.activate(ExtensionProvider.getExtension().context);
     this.fileWatcher = fileWatcher;
   }
 
